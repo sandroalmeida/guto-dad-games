@@ -36,6 +36,7 @@
     Flamethrower: { icon: "♨", cooldown: 0.055, damage: 0.2, label: "MID-RANGE FLAME" },
     Bazooka: { icon: "➤", cooldown: 0.72, damage: 8, label: "FAR-RANGE ONLY" }
   };
+  const weaponUnlockOrder = ["Machine Gun", "Flamethrower", "Bazooka"];
 
   function resize() {
     width = innerWidth; height = innerHeight; dpr = Math.min(devicePixelRatio || 1, 2);
@@ -200,8 +201,8 @@
     state.enemies.push({
       id: Math.random(), kind, boss, lane: lane ?? lanes[(Math.random() * lanes.length) | 0], z: -.02 - Math.random() * .06,
       hp: stats.hp, maxHp: stats.hp, speed: stats.speed, reward: stats.reward, phase: Math.random() * TAU,
-      hit: 0, attack: .6 + Math.random() * .4, dead: false, dying: 0, screen: null, deathParts: null,
-      deathDuration: boss ? 3.4 : (kind === "skeleton" ? 2.5 : 2.7)
+      hit: 0, attack: .6 + Math.random() * .4, dead: false, dying: 0, screen: null, deathParts: null, corpse: false,
+      deathDuration: boss ? 8 : 6
     });
   }
 
@@ -248,8 +249,8 @@
     const roll = Math.random(); let item;
     if (roll < .22) item = "Fall Bomb";
     else {
-      const locked = Object.keys(weaponData).filter(name => name !== "Sidearm" && !state.inventory.includes(name));
-      item = locked.length ? locked[(Math.random() * locked.length) | 0] : ["Machine Gun", "Flamethrower", "Bazooka"][(Math.random() * 3) | 0];
+      const nextWeapon = weaponUnlockOrder.find(name => !state.inventory.includes(name));
+      item = nextWeapon || weaponUnlockOrder[(Math.random() * weaponUnlockOrder.length) | 0];
     }
     if (item === "Fall Bomb") {
       state.bombs++; announce("Fall bomb secured", "Press Ctrl when surrounded");
@@ -276,7 +277,7 @@
   }
 
   function update(dt) {
-    state.elapsed += dt; state.distance += dt * (7.5 + Math.min(4, state.elapsed * .018)); state.roadOffset = (state.roadOffset + dt * .72) % 1;
+    state.elapsed += dt; state.distance += dt * (7.5 + Math.min(4, state.elapsed * .018)); state.roadOffset = (state.roadOffset + dt * .34) % 1;
     state.nextShot = Math.max(0, state.nextShot - dt); state.comboTimer -= dt; state.shake *= Math.pow(.02, dt);
     state.invulnerable = Math.max(0, state.invulnerable - dt);
     if (state.comboTimer <= 0) state.combo = 1;
@@ -291,7 +292,11 @@
     }
 
     for (const enemy of state.enemies) {
-      if (enemy.dead) { enemy.dying += dt; updateDeathParts(enemy, dt); continue; }
+      if (enemy.dead) {
+        enemy.dying += dt;
+        if (enemy.corpse) enemy.z += dt * (enemy.boss ? .28 : .34);
+        updateDeathParts(enemy, dt); continue;
+      }
       enemy.hit = Math.max(0, enemy.hit - dt * 4); enemy.phase += dt * (4 + enemy.speed * 30);
       const speedScale = 1 + Math.min(.45, state.elapsed / 240);
       enemy.z += enemy.speed * speedScale * dt;
@@ -306,7 +311,7 @@
       }
       if (enemy.z > 1.11) { enemy.dead = true; enemy.escaped = true; enemy.deathDuration = .35; }
     }
-    state.enemies = state.enemies.filter(e => !e.dead || e.dying < e.deathDuration);
+    state.enemies = state.enemies.filter(e => !e.dead || (e.dying < e.deathDuration && (!e.corpse || e.z < 1.18)));
     updateEffects(dt); updateHUD();
   }
 
@@ -421,6 +426,7 @@
   }
 
   function beginEnemyDeath(enemy) {
+    enemy.corpse = true;
     const skeletal = enemy.kind === "skeleton" || enemy.kind === "dualist";
     if (skeletal) {
       const pieces = [
@@ -471,7 +477,6 @@
     const shakeX = state.shake ? (Math.random() - .5) * state.shake : 0, shakeY = state.shake ? (Math.random() - .5) * state.shake : 0;
     ctx.save(); ctx.translate(shakeX, shakeY);
     drawBackdrop();
-    drawRoadMotion();
     for (const e of state.enemies.sort((a, b) => a.z - b.z)) { e.screen = projectEnemy(e); drawEnemy(e); }
     if (state.question) drawQuestion(state.question);
     if (state.skyBomb) drawSkyBomb();
@@ -481,67 +486,125 @@
   }
 
   function drawBackdrop() {
+    const horizon = height * .35;
     if (roadImage.complete && roadImage.naturalWidth) {
       const imageRatio = roadImage.naturalWidth / roadImage.naturalHeight, viewRatio = width / height;
       let sx = 0, sy = 0, sw = roadImage.naturalWidth, sh = roadImage.naturalHeight;
       if (viewRatio > imageRatio) { sh = sw / viewRatio; sy = (roadImage.naturalHeight - sh) / 2; }
       else { sw = sh * viewRatio; sx = (roadImage.naturalWidth - sw) / 2; }
-      ctx.drawImage(roadImage, sx, sy, sw, sh, 0, 0, width, height);
-    } else { drawSky(); drawRoad(); drawScenery(); }
+      const distantSourceHeight = sh * .405;
+      ctx.drawImage(roadImage, sx, sy, sw, distantSourceHeight, 0, 0, width, horizon + height * .055);
+    } else drawSky();
 
-    const bottomShade = ctx.createLinearGradient(0, height * .42, 0, height);
-    bottomShade.addColorStop(0, "rgba(3,13,18,0)"); bottomShade.addColorStop(1, "rgba(2,10,14,.52)");
-    ctx.fillStyle = bottomShade; ctx.fillRect(0, height * .38, width, height * .62);
-    ctx.fillStyle = `rgba(78,255,195,${.035 + Math.sin(state.elapsed * .7) * .015})`;
-    ctx.fillRect(0, height * .315, width, height * .12);
-
-    for (let i = 0; i < 12; i++) {
-      const t = ((i / 12 + state.roadOffset * .16) % 1), y = height * .37 + Math.pow(t, 1.65) * height * .61;
-      const half = roadHalfAt(y), side = i % 2 ? -1 : 1, x = width / 2 + side * half * (.25 + (i % 4) * .16);
-      ctx.strokeStyle = `rgba(191,255,226,${.04 + t * .09})`; ctx.lineWidth = 1 + t * 2;
-      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + side * t * 9, y + 8 + t * 22); ctx.stroke();
-    }
+    const abyss = ctx.createLinearGradient(0, horizon, 0, height);
+    abyss.addColorStop(0, "rgba(19,83,78,.12)"); abyss.addColorStop(.09, "rgba(8,49,50,.92)"); abyss.addColorStop(.45, "#071d24"); abyss.addColorStop(1, "#030b10");
+    ctx.fillStyle = abyss; ctx.fillRect(0, horizon, width, height - horizon);
+    const fog = ctx.createRadialGradient(width / 2, horizon, 0, width / 2, horizon, width * .42);
+    fog.addColorStop(0, "rgba(78,255,195,.3)"); fog.addColorStop(.42, "rgba(23,140,127,.12)"); fog.addColorStop(1, "rgba(4,21,27,0)");
+    ctx.fillStyle = fog; ctx.fillRect(0, horizon - height * .04, width, height * .3);
+    drawMovingTrack();
   }
 
-  function drawRoadMotion() {
-    const horizon = height * .35, bottom = height * 1.1, travel = bottom - horizon;
-    const footstep = Math.sin(state.elapsed * 9) * 1.4;
-    ctx.save();
-    ctx.beginPath(); ctx.moveTo(width * .485, horizon); ctx.lineTo(width * 1.08, bottom); ctx.lineTo(-width * .08, bottom); ctx.lineTo(width * .515, horizon); ctx.closePath(); ctx.clip();
+  function trackPoint(depth, side = 0) {
+    const curve = Math.pow(Math.max(0, Math.min(1, depth)), 1.58), y = height * .35 + curve * height * .75;
+    const half = width * (.034 + curve * .55);
+    return { depth, curve, y, x: width / 2 + side * half, half };
+  }
 
-    // Moving transverse seams make the road surface itself slide toward the player.
-    for (let i = 0; i < 10; i++) {
-      const t = (i / 10 + state.roadOffset * .78) % 1;
-      const y = horizon + Math.pow(t, 1.72) * travel + footstep;
-      const half = roadHalfAt(y) * .88;
-      ctx.strokeStyle = `rgba(3,15,18,${.035 + t * .17})`; ctx.lineWidth = .6 + t * 3.4;
-      ctx.beginPath(); ctx.moveTo(width / 2 - half, y); ctx.lineTo(width / 2 + half, y); ctx.stroke();
+  function drawMovingTrack() {
+    const horizon = height * .35, bottom = height * 1.1, phase = state.roadOffset;
+    const road = ctx.createLinearGradient(0, horizon, 0, height);
+    road.addColorStop(0, "#29474b"); road.addColorStop(.38, "#25383f"); road.addColorStop(1, "#15242f");
+    ctx.fillStyle = road; ctx.beginPath(); ctx.moveTo(width * .466, horizon); ctx.lineTo(width * .534, horizon); ctx.lineTo(width * 1.085, bottom); ctx.lineTo(-width * .085, bottom); ctx.closePath(); ctx.fill();
+
+    ctx.strokeStyle = "rgba(102,213,176,.2)"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(width * .466, horizon); ctx.lineTo(-width * .085, bottom); ctx.moveTo(width * .534, horizon); ctx.lineTo(width * 1.085, bottom); ctx.stroke();
+
+    // Alternating stone sections are the moving road itself, not a decoration over a fixed image.
+    for (let i = 0; i < 12; i++) {
+      const t1 = (i / 12 + phase) % 1, t2 = Math.min(1, t1 + 1 / 12), p1 = trackPoint(t1), p2 = trackPoint(t2);
+      const shade = i % 2 ? "rgba(108,112,96,.07)" : "rgba(4,12,18,.085)";
+      ctx.fillStyle = shade; ctx.beginPath();ctx.moveTo(width/2-p1.half*.95,p1.y);ctx.lineTo(width/2+p1.half*.95,p1.y);ctx.lineTo(width/2+p2.half*.95,p2.y);ctx.lineTo(width/2-p2.half*.95,p2.y);ctx.closePath();ctx.fill();
+      for (const side of [-1,1]) {
+        ctx.fillStyle = `rgba(43,55,50,${.16+p2.curve*.18})`;ctx.beginPath();ctx.moveTo(width/2+side*p1.half*.9,p1.y);ctx.lineTo(width/2+side*p1.half*1.01,p1.y);ctx.lineTo(width/2+side*p2.half*1.01,p2.y);ctx.lineTo(width/2+side*p2.half*.9,p2.y);ctx.closePath();ctx.fill();
+      }
     }
 
-    // The central divider accelerates from the vanishing point and passes beneath the runner's feet.
-    ctx.shadowColor = "rgba(255,223,112,.55)"; ctx.shadowBlur = 7;
-    for (let i = 0; i < 8; i++) {
-      const t1 = (i / 8 + state.roadOffset) % 1, t2 = Math.min(1, t1 + .032 + t1 * .105);
-      if (t2 <= t1) continue;
-      const y1 = horizon + Math.pow(t1, 1.68) * travel + footstep, y2 = horizon + Math.pow(t2, 1.68) * travel + footstep;
-      const w1 = .7 + Math.pow(t1, 1.55) * 8, w2 = .8 + Math.pow(t2, 1.55) * 10;
-      const laneGlow = ctx.createLinearGradient(0, y1, 0, y2);
-      laneGlow.addColorStop(0, `rgba(218,205,125,${.28 + t1 * .45})`); laneGlow.addColorStop(1, `rgba(255,229,137,${.38 + t2 * .52})`);
-      ctx.fillStyle = laneGlow; ctx.beginPath(); ctx.moveTo(width / 2 - w1, y1); ctx.lineTo(width / 2 + w1, y1); ctx.lineTo(width / 2 + w2, y2); ctx.lineTo(width / 2 - w2, y2); ctx.closePath(); ctx.fill();
-      ctx.fillStyle = `rgba(255,250,204,${.12 + t2 * .25})`; ctx.beginPath(); ctx.moveTo(width / 2 - w1 * .25, y1); ctx.lineTo(width / 2 + w1 * .25, y1); ctx.lineTo(width / 2 + w2 * .22, y2); ctx.lineTo(width / 2 - w2 * .22, y2); ctx.closePath(); ctx.fill();
+    // Whole road slabs advance from the gate and expand toward the camera.
+    for (let i = 0; i < 12; i++) {
+      const t = (i / 12 + phase) % 1, p = trackPoint(t), edge = p.half * .95;
+      ctx.strokeStyle = `rgba(2,11,15,${.1 + p.curve * .42})`; ctx.lineWidth = .7 + p.curve * 5;
+      ctx.beginPath(); ctx.moveTo(width / 2 - edge, p.y); ctx.lineTo(width / 2 + edge, p.y); ctx.stroke();
+      ctx.strokeStyle = `rgba(97,124,119,${.025 + p.curve * .11})`; ctx.lineWidth = .5 + p.curve * 1.4;
+      ctx.beginPath(); ctx.moveTo(width / 2 - edge * .96, p.y + 2 + p.curve * 3); ctx.lineTo(width / 2 + edge * .96, p.y + 2 + p.curve * 3); ctx.stroke();
+    }
+
+    // These are the road's actual painted lane marks, sharing the same advancing depth as the slabs and fences.
+    ctx.shadowColor = "rgba(255,221,112,.4)"; ctx.shadowBlur = 5;
+    for (let i = 0; i < 10; i++) {
+      const t1 = (i / 10 + phase) % 1, t2 = Math.min(1, t1 + .028 + t1 * .078), p1 = trackPoint(t1), p2 = trackPoint(t2);
+      const w1 = .7 + p1.curve * 7.5, w2 = .8 + p2.curve * 9.5;
+      ctx.fillStyle = `rgba(199,178,91,${.4 + p2.curve * .4})`; ctx.beginPath(); ctx.moveTo(width/2-w1,p1.y);ctx.lineTo(width/2+w1,p1.y);ctx.lineTo(width/2+w2,p2.y);ctx.lineTo(width/2-w2,p2.y);ctx.closePath();ctx.fill();
+      if (p2.curve > .24) { ctx.fillStyle=`rgba(38,49,52,${.3+p2.curve*.32})`;ctx.beginPath();ctx.moveTo(width/2-w2*.72,p1.y+(p2.y-p1.y)*.55);ctx.lineTo(width/2+w2*.18,p1.y+(p2.y-p1.y)*.46);ctx.lineTo(width/2+w2*.52,p1.y+(p2.y-p1.y)*.62);ctx.lineTo(width/2-w2*.44,p1.y+(p2.y-p1.y)*.69);ctx.closePath();ctx.fill(); }
     }
     ctx.shadowBlur = 0;
 
-    // Pebbles and worn paint streak outward as they reach the foreground.
-    for (let i = 0; i < 22; i++) {
-      const seed = (Math.sin(i * 91.73) * 43758.5453) % 1, lane = (seed - Math.floor(seed)) * 1.62 - .81;
-      const t1 = (i / 22 + state.roadOffset * 1.24) % 1, t2 = Math.min(1, t1 + .012 + t1 * .048);
-      const y1 = horizon + Math.pow(t1, 1.7) * travel + footstep, y2 = horizon + Math.pow(t2, 1.7) * travel + footstep;
-      const x1 = width / 2 + lane * roadHalfAt(y1), x2 = width / 2 + lane * roadHalfAt(y2);
-      ctx.strokeStyle = `rgba(191,225,205,${.025 + t1 * .2})`; ctx.lineWidth = .45 + t1 * 2.3; ctx.lineCap = "round";
-      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    // Moving cracks and stones are painted into the advancing road surface rather than over a static picture.
+    for (let i = 0; i < 18; i++) {
+      const seed = Math.abs(Math.sin(i * 78.233) * 43758.5453) % 1, lane = seed * 1.48 - .74;
+      const t1 = (i / 18 + phase * 1.07) % 1, t2 = Math.min(1, t1 + .012 + t1 * .035), p1 = trackPoint(t1), p2 = trackPoint(t2);
+      const x1 = width/2 + lane*p1.half, x2 = width/2 + lane*p2.half;
+      ctx.strokeStyle = `rgba(2,10,14,${.08 + p1.curve * .42})`; ctx.lineWidth = .5 + p1.curve * 3.2;
+      ctx.beginPath(); ctx.moveTo(x1,p1.y);ctx.lineTo(x2,p2.y);ctx.lineTo(x2+(lane>.1?1:-1)*(2+p2.curve*9),p2.y+3+p2.curve*9);ctx.stroke();
     }
-    ctx.restore();
+
+    for (let i = 0; i < 11; i++) {
+      const seed = Math.abs(Math.sin(i * 51.719) * 11943.117) % 1, lane = seed * 1.35 - .675;
+      const depth = (i / 11 + phase * .92) % 1, p = trackPoint(depth), rockW = 1 + p.curve * (13 + seed * 16), rockH = 1 + p.curve * (4 + seed * 8);
+      const x = width/2 + lane*p.half;
+      ctx.fillStyle=`rgba(5,13,18,${.13+p.curve*.48})`;ctx.beginPath();ctx.ellipse(x,p.y,rockW,rockH,lane*.42,0,TAU);ctx.fill();
+      ctx.strokeStyle=`rgba(100,112,103,${.06+p.curve*.2})`;ctx.lineWidth=.5+p.curve;ctx.beginPath();ctx.arc(x,p.y-rockH*.15,rockW*.72,Math.PI,TAU);ctx.stroke();
+    }
+
+    drawTrackFence(-1, phase); drawTrackFence(1, phase);
+  }
+
+  function drawTrackFence(side, phase) {
+    const posts = [];
+    for (let i = 0; i < 9; i++) {
+      const depth = (i / 9 + phase) % 1, p = trackPoint(depth, side * .985);
+      p.id=i;p.tilt=Math.sin(i*2.47+side*1.3)*p.curve*7;p.height=(10+p.curve*142)*(.9+(i%3)*.055);p.width=3+p.curve*23;posts.push(p);
+    }
+    posts.sort((a,b) => a.depth - b.depth);
+
+    // Rails are individual advancing spans between posts, so they stretch and pass the player with the posts.
+    for (let i = 0; i < posts.length - 1; i++) {
+      const a = posts[i], b = posts[i+1];
+      for (const level of [.76,.42]) {
+        const thickness = 1.5 + ((a.curve+b.curve)/2) * 12;
+        if (level === .76 && a.id % 7 === 3 && b.curve > .3) continue;
+        drawWeatheredRail(a,b,level,thickness,side,i);
+      }
+    }
+
+    for (const p of posts) {
+      const w=p.width,h=p.height,topX=p.x+p.tilt;
+      ctx.fillStyle="rgba(0,0,0,.3)";ctx.beginPath();ctx.ellipse(p.x+side*w*.4,p.y+2,w*1.25,2+p.curve*7,0,0,TAU);ctx.fill();
+      ctx.fillStyle="#131a1e";ctx.beginPath();ctx.moveTo(p.x-w*.74,p.y);ctx.lineTo(topX-w*.5,p.y-h);ctx.lineTo(topX+w*.39,p.y-h-p.curve*4);ctx.lineTo(p.x+w*.7,p.y);ctx.closePath();ctx.fill();
+      ctx.fillStyle=`rgba(82,59,45,${.66+p.curve*.2})`;ctx.beginPath();ctx.moveTo(p.x-side*w*.18,p.y);ctx.lineTo(topX-side*w*.16,p.y-h);ctx.lineTo(topX+side*w*.38,p.y-h-p.curve*4);ctx.lineTo(p.x+side*w*.48,p.y);ctx.closePath();ctx.fill();
+      ctx.fillStyle="#0b1114";ctx.beginPath();ctx.moveTo(topX-w*.63,p.y-h-3-p.curve*6);ctx.lineTo(topX+w*.5,p.y-h-5-p.curve*3);ctx.lineTo(topX+w*.62,p.y-h+2+p.curve*2);ctx.lineTo(topX-w*.57,p.y-h+4+p.curve*2);ctx.closePath();ctx.fill();
+      ctx.strokeStyle=`rgba(153,112,74,${.2+p.curve*.3})`;ctx.lineWidth=.5+p.curve*2;ctx.beginPath();ctx.moveTo(topX-side*w*.08,p.y-h*.88);ctx.lineTo(p.x-side*w*.02,p.y-h*.14);ctx.stroke();
+      ctx.fillStyle=`rgba(255,111,51,${.15+p.curve*.4})`;ctx.shadowColor="#ff5e2d";ctx.shadowBlur=p.curve*10;ctx.beginPath();ctx.arc(p.x-side*w*.1,p.y-h*.55,1+p.curve*2.5,0,TAU);ctx.fill();ctx.shadowBlur=0;
+      ctx.fillStyle="#263238";for(const rockSide of[-1,1])for(let r=0;r<2;r++){ctx.beginPath();ctx.ellipse(p.x+rockSide*w*(.78+p.curve*(.42+r*.4)),p.y-r*p.curve*2,1+p.curve*(8+r*4),1+p.curve*(4+r*2),rockSide*.25,0,TAU);ctx.fill()}
+    }
+  }
+
+  function drawWeatheredRail(a,b,level,thickness,side,seed) {
+    const ax=a.x+a.tilt*.68,ay=a.y-a.height*level,bx=b.x+b.tilt*.68,by=b.y-b.height*level;
+    const bend=Math.sin((seed+1)*2.19+side)*thickness*.55,mx=(ax+bx)/2+side*bend,my=(ay+by)/2+bend*.28;
+    ctx.lineCap="square";ctx.lineJoin="bevel";ctx.strokeStyle="#0a1114";ctx.lineWidth=thickness*1.85;ctx.beginPath();ctx.moveTo(ax,ay);ctx.quadraticCurveTo(mx,my,bx,by);ctx.stroke();
+    ctx.strokeStyle=`rgba(89,61,44,${.7+b.curve*.2})`;ctx.lineWidth=thickness;ctx.beginPath();ctx.moveTo(ax,ay-thickness*.08);ctx.quadraticCurveTo(mx,my-thickness*.16,bx,by-thickness*.08);ctx.stroke();
+    ctx.strokeStyle=`rgba(151,109,72,${.16+b.curve*.28})`;ctx.lineWidth=Math.max(.5,thickness*.16);ctx.beginPath();ctx.moveTo(ax,ay-thickness*.38);ctx.quadraticCurveTo(mx,my-thickness*.42,bx,by-thickness*.38);ctx.stroke();
   }
 
   function drawSky() {
@@ -584,7 +647,8 @@
 
   function drawEnemy(e) {
     const {x, y, scale} = e.screen; if (y < height * .31 || y > height * 1.13) return;
-    const fadeStart = e.deathDuration * .68, fade = e.dead && e.dying > fadeStart ? Math.max(0, 1 - (e.dying - fadeStart) / (e.deathDuration - fadeStart)) : 1;
+    const fadeStart = e.deathDuration * .78, timeFade = e.dead && e.dying > fadeStart ? Math.max(0, 1 - (e.dying - fadeStart) / (e.deathDuration - fadeStart)) : 1;
+    const roadFade = e.corpse && e.z > 1.04 ? Math.max(0, 1 - (e.z - 1.04) / .14) : 1, fade = Math.min(timeFade, roadFade);
     ctx.save(); ctx.globalAlpha = fade; ctx.translate(x, y); ctx.scale(scale, scale);
     const bossScale = e.boss ? (e.kind === "club" || e.kind === "dualist" ? 1.55 : 1.28) : 1; ctx.scale(bossScale, bossScale);
     ctx.fillStyle = "rgba(0,0,0,.31)"; ctx.beginPath(); ctx.ellipse(0, 3, 38, 11, 0, 0, TAU); ctx.fill();

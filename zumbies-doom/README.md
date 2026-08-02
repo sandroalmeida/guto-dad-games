@@ -1,6 +1,6 @@
 # Nightfall Run
 
-A responsive, first-person on-rails browser shooter. Choose a survivor, shoot approaching zombies and skeletons, defeat escalating bosses, and solve quick math locks to claim temporary weapons or a one-use sky bomb.
+A responsive, first-person on-rails browser shooter. Choose a survivor, shoot approaching zombies and skeletons, defeat escalating bosses, and solve quick math locks to claim permanent weapons or a one-use sky bomb.
 
 ## Play locally
 
@@ -24,7 +24,8 @@ Then open `http://localhost:4173`.
 
 - Zombies, skeletons, oversized bosses, club-wielding ultra zombies, and dual-sword skeleton bosses.
 - Difficulty that increases through higher enemy density, speed, and recurring boss encounters.
-- A permanent weapon inventory: unlocked machine guns, flamethrowers, and bazookas remain available for the entire run.
+- A permanent weapon inventory with ordered progression: Machine Gun, then Flamethrower, then Bazooka.
+- Road-attached death remains: fallen zombies and shattered skeleton pieces advance toward and pass beneath the player.
 - Collectible one-use fall bombs that are not included in the starting loadout.
 - Range-specific heavy weapons: flames must physically touch a nearby target, while bazookas only fire into the far half of the road.
 - Procedural apocalyptic background music, boss entrance voices, and boss death screams.
