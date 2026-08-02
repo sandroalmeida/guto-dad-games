@@ -17,6 +17,8 @@
   };
 
   const TAU = Math.PI * 2;
+  const ROAD_HORIZON = .325;
+  const TRACK_BOTTOM = 1.11;
   const lanes = [-0.66, -0.33, 0, 0.33, 0.66];
   const colors = { mint: "#6dffb2", orange: "#ff7849", dark: "#071b24", bone: "#d9d7c0" };
   const roadImage = new Image(); roadImage.src = "assets/nightfall-gameplay-road.png";
@@ -457,13 +459,13 @@
   }
 
   function roadHalfAt(y) {
-    const horizon = height * .35, t = Math.max(0, Math.min(1, (y - horizon) / (height * .65)));
-    return width * (.035 + t * .52);
+    const horizon = height * ROAD_HORIZON, t = Math.max(0, Math.min(1, (y - horizon) / (height * (1 - ROAD_HORIZON))));
+    return width * (.026 + t * .534);
   }
 
   function projectEnemy(e) {
-    const horizon = height * .35, depth = Math.max(0, e.z), curve = Math.pow(depth, 1.5);
-    const y = horizon + curve * height * .58; const scale = .14 + curve * 1.48 + (e.boss ? .18 : 0);
+    const horizon = height * ROAD_HORIZON, depth = Math.max(0, e.z), curve = Math.pow(depth, 1.5);
+    const y = horizon + curve * height * .62; const scale = .13 + curve * 1.5 + (e.boss ? .18 : 0);
     const laneSway = Math.sin(e.phase) * (e.boss ? 3 : 7) * scale;
     const x = width / 2 + e.lane * roadHalfAt(y) * 1.25 + laneSway;
     return { x, y, scale };
@@ -486,14 +488,14 @@
   }
 
   function drawBackdrop() {
-    const horizon = height * .35;
+    const horizon = height * ROAD_HORIZON;
     if (roadImage.complete && roadImage.naturalWidth) {
       const imageRatio = roadImage.naturalWidth / roadImage.naturalHeight, viewRatio = width / height;
       let sx = 0, sy = 0, sw = roadImage.naturalWidth, sh = roadImage.naturalHeight;
       if (viewRatio > imageRatio) { sh = sw / viewRatio; sy = (roadImage.naturalHeight - sh) / 2; }
       else { sw = sh * viewRatio; sx = (roadImage.naturalWidth - sw) / 2; }
-      const distantSourceHeight = sh * .405;
-      ctx.drawImage(roadImage, sx, sy, sw, distantSourceHeight, 0, 0, width, horizon + height * .055);
+      const distantSourceHeight = sh * .397;
+      ctx.drawImage(roadImage, sx, sy, sw, distantSourceHeight, 0, 0, width, horizon + height * .01);
     } else drawSky();
 
     const abyss = ctx.createLinearGradient(0, horizon, 0, height);
@@ -506,61 +508,61 @@
   }
 
   function trackPoint(depth, side = 0) {
-    const curve = Math.pow(Math.max(0, Math.min(1, depth)), 1.58), y = height * .35 + curve * height * .75;
-    const half = width * (.034 + curve * .55);
+    const curve = Math.pow(Math.max(0, Math.min(1, depth)), 1.62), y = height * ROAD_HORIZON + curve * height * (TRACK_BOTTOM - ROAD_HORIZON);
+    const half = width * (.026 + curve * .544);
     return { depth, curve, y, x: width / 2 + side * half, half };
   }
 
+  function sceneHash(value) { return Math.abs(Math.sin(value * 78.233) * 43758.5453) % 1; }
+
+  function movingSample(index, count, rate = 1) {
+    const raw = index / count + state.elapsed * .34 * rate;
+    return { depth: ((raw % 1) + 1) % 1, id: index + Math.floor(raw) * count };
+  }
+
   function drawMovingTrack() {
-    const horizon = height * .35, bottom = height * 1.1, phase = state.roadOffset;
+    const horizon = height * ROAD_HORIZON, bottom = height * TRACK_BOTTOM, phase = state.roadOffset;
     const road = ctx.createLinearGradient(0, horizon, 0, height);
-    road.addColorStop(0, "#29474b"); road.addColorStop(.38, "#25383f"); road.addColorStop(1, "#15242f");
-    ctx.fillStyle = road; ctx.beginPath(); ctx.moveTo(width * .466, horizon); ctx.lineTo(width * .534, horizon); ctx.lineTo(width * 1.085, bottom); ctx.lineTo(-width * .085, bottom); ctx.closePath(); ctx.fill();
+    road.addColorStop(0, "#33464c"); road.addColorStop(.34, "#27363f"); road.addColorStop(1, "#151f2b");
+    ctx.fillStyle = road; ctx.beginPath(); ctx.moveTo(width * .474, horizon); ctx.lineTo(width * .526, horizon); ctx.lineTo(width * 1.08, bottom); ctx.lineTo(-width * .08, bottom); ctx.closePath(); ctx.fill();
 
-    ctx.strokeStyle = "rgba(102,213,176,.2)"; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(width * .466, horizon); ctx.lineTo(-width * .085, bottom); ctx.moveTo(width * .534, horizon); ctx.lineTo(width * 1.085, bottom); ctx.stroke();
-
-    // Alternating stone sections are the moving road itself, not a decoration over a fixed image.
-    for (let i = 0; i < 12; i++) {
-      const t1 = (i / 12 + phase) % 1, t2 = Math.min(1, t1 + 1 / 12), p1 = trackPoint(t1), p2 = trackPoint(t2);
-      const shade = i % 2 ? "rgba(108,112,96,.07)" : "rgba(4,12,18,.085)";
-      ctx.fillStyle = shade; ctx.beginPath();ctx.moveTo(width/2-p1.half*.95,p1.y);ctx.lineTo(width/2+p1.half*.95,p1.y);ctx.lineTo(width/2+p2.half*.95,p2.y);ctx.lineTo(width/2-p2.half*.95,p2.y);ctx.closePath();ctx.fill();
-      for (const side of [-1,1]) {
-        ctx.fillStyle = `rgba(43,55,50,${.16+p2.curve*.18})`;ctx.beginPath();ctx.moveTo(width/2+side*p1.half*.9,p1.y);ctx.lineTo(width/2+side*p1.half*1.01,p1.y);ctx.lineTo(width/2+side*p2.half*1.01,p2.y);ctx.lineTo(width/2+side*p2.half*.9,p2.y);ctx.closePath();ctx.fill();
-      }
+    for (const side of [-1,1]) {
+      const shoulder=ctx.createLinearGradient(0,horizon,0,height);shoulder.addColorStop(0,"rgba(31,43,44,.65)");shoulder.addColorStop(1,"rgba(11,17,23,.96)");ctx.fillStyle=shoulder;
+      ctx.beginPath();ctx.moveTo(width/2+side*width*.028,horizon);ctx.lineTo(width/2+side*width*.036,horizon);ctx.lineTo(width/2+side*width*.59,bottom);ctx.lineTo(width/2+side*width*.53,bottom);ctx.closePath();ctx.fill();
     }
+    ctx.strokeStyle = "rgba(91,123,117,.22)"; ctx.lineWidth = 2;
+    ctx.beginPath();ctx.moveTo(width*.474,horizon);ctx.lineTo(-width*.08,bottom);ctx.moveTo(width*.526,horizon);ctx.lineTo(width*1.08,bottom);ctx.stroke();
 
-    // Whole road slabs advance from the gate and expand toward the camera.
-    for (let i = 0; i < 12; i++) {
-      const t = (i / 12 + phase) % 1, p = trackPoint(t), edge = p.half * .95;
-      ctx.strokeStyle = `rgba(2,11,15,${.1 + p.curve * .42})`; ctx.lineWidth = .7 + p.curve * 5;
-      ctx.beginPath(); ctx.moveTo(width / 2 - edge, p.y); ctx.lineTo(width / 2 + edge, p.y); ctx.stroke();
-      ctx.strokeStyle = `rgba(97,124,119,${.025 + p.curve * .11})`; ctx.lineWidth = .5 + p.curve * 1.4;
-      ctx.beginPath(); ctx.moveTo(width / 2 - edge * .96, p.y + 2 + p.curve * 3); ctx.lineTo(width / 2 + edge * .96, p.y + 2 + p.curve * 3); ctx.stroke();
+    // Broad, irregular repairs drift with the asphalt and avoid readable repeating bands.
+    for (let i=0;i<15;i++) {
+      const sample=movingSample(i,15,.83),seed=sceneHash(sample.id),seed2=sceneHash(sample.id+31),p=trackPoint(sample.depth);
+      const x=width/2+(seed*1.35-.675)*p.half,w=2+p.curve*(24+seed2*42),h=1+p.curve*(7+seed*13);
+      ctx.fillStyle=`rgba(9,18,25,${.025+p.curve*.12})`;ctx.beginPath();ctx.ellipse(x,p.y,w,h,(seed-.5)*.65,0,TAU);ctx.fill();
+      ctx.strokeStyle=`rgba(92,104,101,${.018+p.curve*.08})`;ctx.lineWidth=.5+p.curve;ctx.beginPath();ctx.arc(x,p.y-h*.18,w*.7,Math.PI*.96,TAU*.96);ctx.stroke();
     }
 
     // These are the road's actual painted lane marks, sharing the same advancing depth as the slabs and fences.
     ctx.shadowColor = "rgba(255,221,112,.4)"; ctx.shadowBlur = 5;
     for (let i = 0; i < 10; i++) {
-      const t1 = (i / 10 + phase) % 1, t2 = Math.min(1, t1 + .028 + t1 * .078), p1 = trackPoint(t1), p2 = trackPoint(t2);
+      const sample=movingSample(i,10),t1=sample.depth,t2=Math.min(1,t1+.025+t1*.075*(.8+sceneHash(sample.id)*.35)),p1=trackPoint(t1),p2=trackPoint(t2);
       const w1 = .7 + p1.curve * 7.5, w2 = .8 + p2.curve * 9.5;
-      ctx.fillStyle = `rgba(199,178,91,${.4 + p2.curve * .4})`; ctx.beginPath(); ctx.moveTo(width/2-w1,p1.y);ctx.lineTo(width/2+w1,p1.y);ctx.lineTo(width/2+w2,p2.y);ctx.lineTo(width/2-w2,p2.y);ctx.closePath();ctx.fill();
+      ctx.fillStyle = `rgba(188,165,86,${.36 + p2.curve * .38})`; ctx.beginPath(); ctx.moveTo(width/2-w1,p1.y);ctx.lineTo(width/2+w1,p1.y);ctx.lineTo(width/2+w2,p2.y);ctx.lineTo(width/2-w2,p2.y);ctx.closePath();ctx.fill();
       if (p2.curve > .24) { ctx.fillStyle=`rgba(38,49,52,${.3+p2.curve*.32})`;ctx.beginPath();ctx.moveTo(width/2-w2*.72,p1.y+(p2.y-p1.y)*.55);ctx.lineTo(width/2+w2*.18,p1.y+(p2.y-p1.y)*.46);ctx.lineTo(width/2+w2*.52,p1.y+(p2.y-p1.y)*.62);ctx.lineTo(width/2-w2*.44,p1.y+(p2.y-p1.y)*.69);ctx.closePath();ctx.fill(); }
     }
     ctx.shadowBlur = 0;
 
-    // Moving cracks and stones are painted into the advancing road surface rather than over a static picture.
-    for (let i = 0; i < 18; i++) {
-      const seed = Math.abs(Math.sin(i * 78.233) * 43758.5453) % 1, lane = seed * 1.48 - .74;
-      const t1 = (i / 18 + phase * 1.07) % 1, t2 = Math.min(1, t1 + .012 + t1 * .035), p1 = trackPoint(t1), p2 = trackPoint(t2);
-      const x1 = width/2 + lane*p1.half, x2 = width/2 + lane*p2.half;
-      ctx.strokeStyle = `rgba(2,10,14,${.08 + p1.curve * .42})`; ctx.lineWidth = .5 + p1.curve * 3.2;
-      ctx.beginPath(); ctx.moveTo(x1,p1.y);ctx.lineTo(x2,p2.y);ctx.lineTo(x2+(lane>.1?1:-1)*(2+p2.curve*9),p2.y+3+p2.curve*9);ctx.stroke();
+    // World-space crack clusters get a new deterministic shape only when they recycle at the portal.
+    for (let i = 0; i < 26; i++) {
+      const sample=movingSample(i,26),seed=sceneHash(sample.id),seed2=sceneHash(sample.id+19),seed3=sceneHash(sample.id+47),p=trackPoint(sample.depth);
+      const lane=seed*1.45-.725,x=width/2+lane*p.half,size=1+p.curve*(16+seed2*33),direction=(seed3-.5)*size*.58;
+      ctx.strokeStyle=`rgba(3,9,15,${.09+p.curve*.58})`;ctx.lineWidth=.45+p.curve*(1.8+seed2*1.8);ctx.lineCap="round";ctx.lineJoin="round";
+      ctx.beginPath();ctx.moveTo(x,p.y);ctx.lineTo(x+direction*.22,p.y+size*.23);ctx.lineTo(x-direction*.18,p.y+size*.51);ctx.lineTo(x+direction,p.y+size);ctx.stroke();
+      if(seed2>.3){ctx.lineWidth*=.62;ctx.beginPath();ctx.moveTo(x+direction*.02,p.y+size*.43);ctx.lineTo(x-direction*.48,p.y+size*(.58+seed*.14));ctx.lineTo(x-direction*.64,p.y+size*(.72+seed3*.13));ctx.stroke()}
+      if(seed3>.56){ctx.beginPath();ctx.moveTo(x+direction*.5,p.y+size*.72);ctx.lineTo(x+direction*.95,p.y+size*(.8+seed*.1));ctx.stroke()}
     }
 
-    for (let i = 0; i < 11; i++) {
-      const seed = Math.abs(Math.sin(i * 51.719) * 11943.117) % 1, lane = seed * 1.35 - .675;
-      const depth = (i / 11 + phase * .92) % 1, p = trackPoint(depth), rockW = 1 + p.curve * (13 + seed * 16), rockH = 1 + p.curve * (4 + seed * 8);
+    for (let i = 0; i < 12; i++) {
+      const sample=movingSample(i,12,.91),seed=sceneHash(sample.id),lane=seed*1.38-.69,p=trackPoint(sample.depth),rockW=1+p.curve*(10+sceneHash(sample.id+9)*18),rockH=1+p.curve*(3+seed*7);
       const x = width/2 + lane*p.half;
       ctx.fillStyle=`rgba(5,13,18,${.13+p.curve*.48})`;ctx.beginPath();ctx.ellipse(x,p.y,rockW,rockH,lane*.42,0,TAU);ctx.fill();
       ctx.strokeStyle=`rgba(100,112,103,${.06+p.curve*.2})`;ctx.lineWidth=.5+p.curve;ctx.beginPath();ctx.arc(x,p.y-rockH*.15,rockW*.72,Math.PI,TAU);ctx.stroke();
@@ -570,10 +572,10 @@
   }
 
   function drawTrackFence(side, phase) {
-    const posts = [];
-    for (let i = 0; i < 9; i++) {
-      const depth = (i / 9 + phase) % 1, p = trackPoint(depth, side * .985);
-      p.id=i;p.tilt=Math.sin(i*2.47+side*1.3)*p.curve*7;p.height=(10+p.curve*142)*(.9+(i%3)*.055);p.width=3+p.curve*23;posts.push(p);
+    const anchor=trackPoint(0,side*.985),posts=[anchor];anchor.id=-1;anchor.tilt=0;anchor.height=8;anchor.width=3;
+    for (let i = 0; i < 8; i++) {
+      const sample=movingSample(i,8),p=trackPoint(sample.depth,side*.985),variation=sceneHash(sample.id+side*13);
+      p.id=sample.id;p.tilt=(variation-.5)*p.curve*14;p.height=(11+p.curve*164)*(.9+sceneHash(sample.id+7)*.15);p.width=5+p.curve*31;posts.push(p);
     }
     posts.sort((a,b) => a.depth - b.depth);
 
@@ -581,8 +583,8 @@
     for (let i = 0; i < posts.length - 1; i++) {
       const a = posts[i], b = posts[i+1];
       for (const level of [.76,.42]) {
-        const thickness = 1.5 + ((a.curve+b.curve)/2) * 12;
-        if (level === .76 && a.id % 7 === 3 && b.curve > .3) continue;
+        const thickness = 3 + ((a.curve+b.curve)/2) * 18;
+        if (level === .76 && sceneHash(a.id+side*31) > .76 && b.curve > .25) continue;
         drawWeatheredRail(a,b,level,thickness,side,i);
       }
     }
@@ -591,7 +593,7 @@
       const w=p.width,h=p.height,topX=p.x+p.tilt;
       ctx.fillStyle="rgba(0,0,0,.3)";ctx.beginPath();ctx.ellipse(p.x+side*w*.4,p.y+2,w*1.25,2+p.curve*7,0,0,TAU);ctx.fill();
       ctx.fillStyle="#131a1e";ctx.beginPath();ctx.moveTo(p.x-w*.74,p.y);ctx.lineTo(topX-w*.5,p.y-h);ctx.lineTo(topX+w*.39,p.y-h-p.curve*4);ctx.lineTo(p.x+w*.7,p.y);ctx.closePath();ctx.fill();
-      ctx.fillStyle=`rgba(82,59,45,${.66+p.curve*.2})`;ctx.beginPath();ctx.moveTo(p.x-side*w*.18,p.y);ctx.lineTo(topX-side*w*.16,p.y-h);ctx.lineTo(topX+side*w*.38,p.y-h-p.curve*4);ctx.lineTo(p.x+side*w*.48,p.y);ctx.closePath();ctx.fill();
+      ctx.fillStyle=`rgba(59,49,43,${.82+p.curve*.12})`;ctx.beginPath();ctx.moveTo(p.x-side*w*.18,p.y);ctx.lineTo(topX-side*w*.16,p.y-h);ctx.lineTo(topX+side*w*.38,p.y-h-p.curve*4);ctx.lineTo(p.x+side*w*.48,p.y);ctx.closePath();ctx.fill();
       ctx.fillStyle="#0b1114";ctx.beginPath();ctx.moveTo(topX-w*.63,p.y-h-3-p.curve*6);ctx.lineTo(topX+w*.5,p.y-h-5-p.curve*3);ctx.lineTo(topX+w*.62,p.y-h+2+p.curve*2);ctx.lineTo(topX-w*.57,p.y-h+4+p.curve*2);ctx.closePath();ctx.fill();
       ctx.strokeStyle=`rgba(153,112,74,${.2+p.curve*.3})`;ctx.lineWidth=.5+p.curve*2;ctx.beginPath();ctx.moveTo(topX-side*w*.08,p.y-h*.88);ctx.lineTo(p.x-side*w*.02,p.y-h*.14);ctx.stroke();
       ctx.fillStyle=`rgba(255,111,51,${.15+p.curve*.4})`;ctx.shadowColor="#ff5e2d";ctx.shadowBlur=p.curve*10;ctx.beginPath();ctx.arc(p.x-side*w*.1,p.y-h*.55,1+p.curve*2.5,0,TAU);ctx.fill();ctx.shadowBlur=0;
@@ -603,8 +605,8 @@
     const ax=a.x+a.tilt*.68,ay=a.y-a.height*level,bx=b.x+b.tilt*.68,by=b.y-b.height*level;
     const bend=Math.sin((seed+1)*2.19+side)*thickness*.55,mx=(ax+bx)/2+side*bend,my=(ay+by)/2+bend*.28;
     ctx.lineCap="square";ctx.lineJoin="bevel";ctx.strokeStyle="#0a1114";ctx.lineWidth=thickness*1.85;ctx.beginPath();ctx.moveTo(ax,ay);ctx.quadraticCurveTo(mx,my,bx,by);ctx.stroke();
-    ctx.strokeStyle=`rgba(89,61,44,${.7+b.curve*.2})`;ctx.lineWidth=thickness;ctx.beginPath();ctx.moveTo(ax,ay-thickness*.08);ctx.quadraticCurveTo(mx,my-thickness*.16,bx,by-thickness*.08);ctx.stroke();
-    ctx.strokeStyle=`rgba(151,109,72,${.16+b.curve*.28})`;ctx.lineWidth=Math.max(.5,thickness*.16);ctx.beginPath();ctx.moveTo(ax,ay-thickness*.38);ctx.quadraticCurveTo(mx,my-thickness*.42,bx,by-thickness*.38);ctx.stroke();
+    ctx.strokeStyle=`rgba(61,51,44,${.86+b.curve*.1})`;ctx.lineWidth=thickness;ctx.beginPath();ctx.moveTo(ax,ay-thickness*.08);ctx.quadraticCurveTo(mx,my-thickness*.16,bx,by-thickness*.08);ctx.stroke();
+    ctx.strokeStyle=`rgba(139,119,91,${.13+b.curve*.23})`;ctx.lineWidth=Math.max(.5,thickness*.16);ctx.beginPath();ctx.moveTo(ax,ay-thickness*.38);ctx.quadraticCurveTo(mx,my-thickness*.42,bx,by-thickness*.38);ctx.stroke();
   }
 
   function drawSky() {
@@ -646,7 +648,7 @@
   }
 
   function drawEnemy(e) {
-    const {x, y, scale} = e.screen; if (y < height * .31 || y > height * 1.13) return;
+    const {x, y, scale} = e.screen; if (y < height * (ROAD_HORIZON - .035) || y > height * 1.13) return;
     const fadeStart = e.deathDuration * .78, timeFade = e.dead && e.dying > fadeStart ? Math.max(0, 1 - (e.dying - fadeStart) / (e.deathDuration - fadeStart)) : 1;
     const roadFade = e.corpse && e.z > 1.04 ? Math.max(0, 1 - (e.z - 1.04) / .14) : 1, fade = Math.min(timeFade, roadFade);
     ctx.save(); ctx.globalAlpha = fade; ctx.translate(x, y); ctx.scale(scale, scale);
@@ -690,34 +692,78 @@
     }
   }
 
+  function drawJointedLimb(ax,ay,bx,by,cx,cy,outer,inner,outerWidth,innerWidth,jointSize=0) {
+    ctx.lineCap="round";ctx.lineJoin="round";ctx.strokeStyle=outer;ctx.lineWidth=outerWidth;ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(bx,by);ctx.lineTo(cx,cy);ctx.stroke();
+    ctx.strokeStyle=inner;ctx.lineWidth=innerWidth;ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(bx,by);ctx.lineTo(cx,cy);ctx.stroke();
+    if(jointSize){ctx.fillStyle=inner;ctx.beginPath();ctx.arc(bx,by,jointSize,0,TAU);ctx.arc(cx,cy,jointSize*.85,0,TAU);ctx.fill()}
+  }
+
   function drawZombie(e) {
-    const walk = Math.sin(e.phase) * 5, attack = e.z > .9 && e.attack < .42 ? Math.sin((.42-e.attack)*7) : 0;
-    ctx.lineCap="round";ctx.strokeStyle="#17231e";ctx.lineWidth=15;ctx.beginPath();ctx.moveTo(-14,-45);ctx.lineTo(-19+walk,0);ctx.moveTo(14,-45);ctx.lineTo(19-walk,0);ctx.stroke();
-    ctx.strokeStyle="#263634";ctx.lineWidth=9;ctx.beginPath();ctx.moveTo(-18,-34);ctx.lineTo(-20+walk,-4);ctx.moveTo(18,-34);ctx.lineTo(20-walk,-4);ctx.stroke();ctx.fillStyle="#111b1c";ctx.fillRect(-29+walk,-8,19,9);ctx.fillRect(10-walk,-8,19,9);
-    ctx.fillStyle=e.kind==="club"?"#3c2c25":"#4a3437";ctx.beginPath();ctx.roundRect(-33,-91,66,58,9);ctx.fill();
-    ctx.fillStyle="#6f315c";ctx.beginPath();ctx.moveTo(-32,-79);ctx.lineTo(-13,-91);ctx.lineTo(-5,-73);ctx.lineTo(8,-90);ctx.lineTo(20,-69);ctx.lineTo(33,-82);ctx.lineTo(33,-59);ctx.lineTo(-33,-59);ctx.closePath();ctx.fill();
-    ctx.fillStyle="#36282c";ctx.fillRect(-32,-57,64,19);ctx.strokeStyle="#8b4776";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-24,-72);ctx.lineTo(-8,-66);ctx.moveTo(3,-72);ctx.lineTo(22,-67);ctx.stroke();
-    ctx.fillStyle=e.kind==="club"?"#799b55":"#648d55";ctx.beginPath();ctx.arc(0,-106,27,0,TAU);ctx.fill();ctx.fillStyle="#506f47";ctx.beginPath();ctx.arc(-23,-106,7,0,TAU);ctx.arc(23,-105,7,0,TAU);ctx.fill();
-    ctx.fillStyle="#dff889";ctx.shadowColor="#b5ff70";ctx.shadowBlur=e.boss?9:3;ctx.fillRect(-14,-111,8,6);ctx.fillRect(7,-111,8,6);ctx.shadowBlur=0;ctx.fillStyle="#192019";ctx.fillRect(-11,-109,3,3);ctx.fillRect(10,-109,3,3);
-    ctx.fillStyle="#381b32";ctx.beginPath();ctx.ellipse(-17,-96,7,4,-.4,0,TAU);ctx.fill();ctx.strokeStyle="#2b2922";ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(-12,-91);ctx.quadraticCurveTo(0,-84,13,-92);ctx.stroke();ctx.fillStyle="#c6b69c";for(let i=0;i<4;i++)ctx.fillRect(-8+i*5,-91,3,4);
-    ctx.strokeStyle="#45693e";ctx.lineWidth=12;ctx.beginPath();ctx.moveTo(-27,-79);ctx.lineTo(-50,-43+walk);ctx.moveTo(27,-79);ctx.lineTo(50,-42-walk);ctx.stroke();ctx.fillStyle="#658b50";for(const side of[-1,1]){ctx.beginPath();ctx.arc(side*51,-40-side*walk,8,0,TAU);ctx.fill();ctx.strokeStyle="#45693e";ctx.lineWidth=2;for(let f=-1;f<=1;f++){ctx.beginPath();ctx.moveTo(side*52,-37-side*walk);ctx.lineTo(side*(58+Math.abs(f)*2),-30+f*3-side*walk);ctx.stroke()}}
-    if(e.boss){ctx.fillStyle="#26363a";for(const side of[-1,1]){ctx.beginPath();ctx.moveTo(side*25,-88);ctx.lineTo(side*48,-82);ctx.lineTo(side*32,-66);ctx.closePath();ctx.fill()}ctx.fillStyle=colors.orange;ctx.fillRect(-3,-132,6,11)}
+    const gait=e.phase,step=Math.sin(gait),drag=Math.sin(gait*.5+1.1),bob=Math.max(0,step)*2.5,attack=e.z>.9&&e.attack<.42?Math.sin((.42-e.attack)*7):0;
+    const skin=e.kind==="club"?"#789456":"#628554",skinDark="#314738",shirt=e.kind==="club"?"#45322c":"#54313f";
+    ctx.save();ctx.translate(step*1.8,-bob);ctx.rotate(-.045+step*.022);
+    const leftLift=Math.max(0,step),rightLift=Math.max(0,-step)*.28;
+    drawJointedLimb(-14,-47,-18-step*7,-25-leftLift*5,-24-step*14,-2-leftLift*5,"#111a1c","#263433",17,10,5);
+    drawJointedLimb(14,-47,19+drag*3,-24-rightLift*2,22+drag*7,-1-rightLift*2,"#111a1c","#263433",17,10,5);
+    ctx.fillStyle="#0a1114";ctx.beginPath();ctx.roundRect(-36-step*14,-8-leftLift*5,25,10,4);ctx.roundRect(9+drag*7,-7-rightLift*2,27,10,4);ctx.fill();
+
+    ctx.fillStyle="#1b2527";ctx.beginPath();ctx.moveTo(-31,-58);ctx.lineTo(31,-58);ctx.lineTo(25,-39);ctx.lineTo(7,-43);ctx.lineTo(-6,-37);ctx.lineTo(-27,-42);ctx.closePath();ctx.fill();
+    ctx.fillStyle=shirt;ctx.beginPath();ctx.moveTo(-31,-91);ctx.lineTo(-15,-96);ctx.lineTo(-5,-87);ctx.lineTo(8,-97);ctx.lineTo(20,-86);ctx.lineTo(33,-91);ctx.lineTo(29,-49);ctx.lineTo(10,-53);ctx.lineTo(-1,-46);ctx.lineTo(-15,-54);ctx.lineTo(-30,-49);ctx.closePath();ctx.fill();
+    ctx.fillStyle="#742c5e";ctx.beginPath();ctx.moveTo(-28,-82);ctx.lineTo(-7,-91);ctx.lineTo(2,-77);ctx.lineTo(17,-88);ctx.lineTo(30,-78);ctx.lineTo(27,-66);ctx.lineTo(-29,-66);ctx.closePath();ctx.fill();
+    ctx.strokeStyle="#a44d82";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-22,-72);ctx.lineTo(-8,-67);ctx.moveTo(5,-73);ctx.lineTo(20,-69);ctx.stroke();
+    ctx.fillStyle="#281a22";ctx.beginPath();ctx.ellipse(17,-61,8,11,.35,0,TAU);ctx.fill();ctx.strokeStyle="#a63f8f";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(11,-58);ctx.lineTo(24,-65);ctx.moveTo(14,-67);ctx.lineTo(23,-56);ctx.stroke();
+
+    for(const side of[-1,1]){
+      const clubArm=e.kind==="club"&&side===1,shoulderX=side*27,shoulderY=-83;
+      const elbowX=clubArm?39:side*(38+step*2),elbowY=clubArm?-72:-67+side*step*2;
+      const handX=clubArm?45:side*(27+attack*9),handY=clubArm?-56:-42-attack*8;
+      drawJointedLimb(shoulderX,shoulderY,elbowX,elbowY,handX,handY,skinDark,skin,17,11,6);
+      ctx.fillStyle=skin;ctx.beginPath();ctx.ellipse(handX,handY,clubArm?8:11,clubArm?8:10,side*.16,0,TAU);ctx.fill();
+      if(!clubArm){ctx.strokeStyle=skinDark;ctx.lineWidth=2;for(let f=-1;f<=1;f++){ctx.beginPath();ctx.moveTo(handX+side*3,handY+f*3);ctx.lineTo(handX+side*(10+Math.abs(f)*2),handY+f*5);ctx.stroke()}}
+    }
+
+    ctx.fillStyle=skinDark;ctx.fillRect(-8,-103,17,16);
+    ctx.save();ctx.translate(step*2.8,-1);ctx.rotate(step*.055+drag*.025);
+    ctx.fillStyle=skin;ctx.beginPath();ctx.moveTo(-24,-124);ctx.quadraticCurveTo(-30,-106,-20,-91);ctx.quadraticCurveTo(0,-82,22,-93);ctx.quadraticCurveTo(30,-108,22,-125);ctx.quadraticCurveTo(0,-137,-24,-124);ctx.fill();
+    ctx.fillStyle="#455e43";ctx.beginPath();ctx.arc(-23,-108,7,0,TAU);ctx.arc(22,-106,6,0,TAU);ctx.fill();
+    ctx.fillStyle="#362238";ctx.beginPath();ctx.ellipse(-17,-116,8,5,-.35,0,TAU);ctx.fill();ctx.strokeStyle="#7b3990";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-23,-119);ctx.lineTo(-11,-113);ctx.stroke();
+    ctx.fillStyle="#e5ff94";ctx.shadowColor="#b7ff6f";ctx.shadowBlur=e.boss?10:4;ctx.beginPath();ctx.ellipse(-9,-113,5,4,-.1,0,TAU);ctx.ellipse(11,-111,4,5,.2,0,TAU);ctx.fill();ctx.shadowBlur=0;ctx.fillStyle="#172019";ctx.beginPath();ctx.arc(-8,-113,2,0,TAU);ctx.arc(11,-111,2,0,TAU);ctx.fill();
+    ctx.fillStyle="#28151f";ctx.beginPath();ctx.moveTo(-13,-99);ctx.quadraticCurveTo(1,-88,15,-99);ctx.lineTo(11,-87);ctx.lineTo(-8,-88);ctx.closePath();ctx.fill();ctx.fillStyle="#d6c4a4";for(let i=0;i<5;i++){const toothX=-10+i*5;ctx.beginPath();ctx.moveTo(toothX,-98);ctx.lineTo(toothX+3,-98);ctx.lineTo(toothX+1,-92-(i%3));ctx.fill()}
+    ctx.strokeStyle="#314c37";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(3,-126);ctx.lineTo(-2,-116);ctx.lineTo(5,-119);ctx.moveTo(17,-103);ctx.lineTo(8,-98);ctx.stroke();ctx.restore();
+    if(e.boss){ctx.fillStyle="#24343a";for(const side of[-1,1]){ctx.beginPath();ctx.moveTo(side*23,-92);ctx.lineTo(side*49,-87);ctx.lineTo(side*31,-67);ctx.closePath();ctx.fill()}ctx.fillStyle=colors.orange;ctx.beginPath();ctx.moveTo(-4,-133);ctx.lineTo(0,-145);ctx.lineTo(5,-133);ctx.fill()}
     if (e.kind === "club") {
       ctx.save();ctx.translate(45,-55);ctx.rotate(-.55+attack*1.65);ctx.strokeStyle="#4a2a1b";ctx.lineWidth=8;ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(0,-74);ctx.stroke();ctx.fillStyle="#73513a";ctx.beginPath();ctx.roundRect(-13,-88,27,50,7);ctx.fill();ctx.fillStyle="#aa7a50";for(let i=0;i<3;i++){ctx.beginPath();ctx.moveTo(-12+i*12,-80);ctx.lineTo(-20+i*17,-90);ctx.lineTo(-7+i*12,-85);ctx.fill()}ctx.restore();
     }
+    ctx.restore();
   }
 
   function drawSkeleton(e) {
-    const walk=Math.sin(e.phase)*4, attack=e.z>.9&&e.attack<.5?Math.sin((.5-e.attack)*6):0;
-    const bone=e.boss?"#eee9cd":"#d9d7c0",shadow="#929588";ctx.lineCap="round";ctx.strokeStyle=shadow;ctx.lineWidth=10;ctx.beginPath();ctx.moveTo(0,-77);ctx.lineTo(0,-31);ctx.moveTo(-21,-33);ctx.lineTo(-22+walk,0);ctx.moveTo(21,-33);ctx.lineTo(22-walk,0);ctx.moveTo(-25,-72);ctx.lineTo(-44,-41);ctx.moveTo(25,-72);ctx.lineTo(44,-41);ctx.stroke();
-    ctx.strokeStyle=bone;ctx.lineWidth=6;ctx.beginPath();ctx.moveTo(0,-77);ctx.lineTo(0,-31);ctx.moveTo(-21,-33);ctx.lineTo(-22+walk,0);ctx.moveTo(21,-33);ctx.lineTo(22-walk,0);ctx.moveTo(-25,-72);ctx.lineTo(-44,-41);ctx.moveTo(25,-72);ctx.lineTo(44,-41);ctx.stroke();
-    ctx.fillStyle=bone;for(const [jx,jy] of [[-25,-72],[25,-72],[-21,-33],[21,-33],[-44,-41],[44,-41],[-22+walk,0],[22-walk,0]]){ctx.beginPath();ctx.arc(jx,jy,5,0,TAU);ctx.fill()}
-    ctx.strokeStyle=bone;ctx.lineWidth=4;for(let i=0;i<5;i++){ctx.beginPath();ctx.moveTo(-22,-70+i*7);ctx.quadraticCurveTo(0,-54+i*3,22,-70+i*7);ctx.stroke()}ctx.fillStyle=bone;ctx.beginPath();ctx.arc(0,-35,18,0,Math.PI);ctx.lineTo(0,-25);ctx.closePath();ctx.fill();ctx.fillStyle="#152128";ctx.beginPath();ctx.arc(0,-34,8,0,Math.PI);ctx.fill();
-    ctx.fillStyle=bone;ctx.beginPath();ctx.arc(0,-102,27,0,TAU);ctx.fill();ctx.beginPath();ctx.roundRect(-19,-91,38,20,7);ctx.fill();ctx.fillStyle="#132027";ctx.beginPath();ctx.ellipse(-10,-106,7,9,-.1,0,TAU);ctx.ellipse(10,-106,7,9,.1,0,TAU);ctx.fill();ctx.beginPath();ctx.moveTo(-5,-94);ctx.lineTo(0,-101);ctx.lineTo(5,-94);ctx.fill();ctx.strokeStyle="#777b71";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-16,-88);ctx.lineTo(16,-88);ctx.moveTo(-12,-88);ctx.lineTo(-12,-80);ctx.moveTo(-5,-88);ctx.lineTo(-5,-80);ctx.moveTo(3,-88);ctx.lineTo(3,-80);ctx.moveTo(11,-88);ctx.lineTo(11,-80);ctx.stroke();ctx.beginPath();ctx.moveTo(5,-124);ctx.lineTo(-2,-112);ctx.lineTo(8,-115);ctx.stroke();
-    if(e.boss){ctx.fillStyle=colors.orange;ctx.shadowColor=colors.orange;ctx.shadowBlur=10;ctx.beginPath();ctx.arc(-10,-106,3,0,TAU);ctx.arc(10,-106,3,0,TAU);ctx.fill();ctx.shadowBlur=0;ctx.fillStyle="#334449";for(const side of[-1,1]){ctx.beginPath();ctx.moveTo(side*22,-79);ctx.lineTo(side*39,-84);ctx.lineTo(side*28,-65);ctx.closePath();ctx.fill()}}
-    if(e.kind==="dualist"){
-      for(const side of [-1,1]){ctx.save();ctx.translate(side*41,-43);ctx.rotate(side*(-.55+attack*1.5));ctx.strokeStyle="#d4fff3";ctx.shadowColor=colors.mint;ctx.shadowBlur=7;ctx.lineWidth=6;ctx.beginPath();ctx.moveTo(0,5);ctx.lineTo(0,-74);ctx.stroke();ctx.shadowBlur=0;ctx.strokeStyle="#4d6d6a";ctx.lineWidth=9;ctx.beginPath();ctx.moveTo(-11,-4);ctx.lineTo(11,-4);ctx.stroke();ctx.fillStyle="#2a3538";ctx.fillRect(-5,2,10,18);ctx.restore()}
+    const gait=e.phase*.92,step=Math.sin(gait),bob=Math.abs(Math.sin(gait))*1.7,headSway=Math.sin(e.phase*1.37)*7,headTilt=Math.sin(e.phase*1.37+.7)*.14,attack=e.z>.9&&e.attack<.5?Math.sin((.5-e.attack)*6):0;
+    const bone=e.boss?"#f0ead0":"#d8d7c2",shadow="#737d78",armed=e.kind==="dualist";
+    ctx.save();ctx.translate(0,-bob);ctx.rotate(step*.012);
+    const leftKneeX=-13+step*8,rightKneeX=13-step*8,leftFootX=-19+step*14,rightFootX=19-step*14;
+    drawJointedLimb(-10,-35,leftKneeX,-18,leftFootX,0,shadow,bone,10,5,5);
+    drawJointedLimb(10,-35,rightKneeX,-18,rightFootX,0,shadow,bone,10,5,5);
+    ctx.fillStyle=bone;ctx.beginPath();ctx.ellipse(leftFootX-3,0,11,4,-.06,0,TAU);ctx.ellipse(rightFootX+3,0,11,4,.06,0,TAU);ctx.fill();
+    ctx.fillStyle=bone;ctx.beginPath();ctx.moveTo(-18,-39);ctx.quadraticCurveTo(-22,-28,-10,-24);ctx.lineTo(0,-29);ctx.lineTo(10,-24);ctx.quadraticCurveTo(22,-28,18,-39);ctx.quadraticCurveTo(0,-31,-18,-39);ctx.fill();ctx.fillStyle="#142027";ctx.beginPath();ctx.arc(0,-33,8,0,Math.PI);ctx.fill();
+    ctx.strokeStyle=shadow;ctx.lineWidth=8;ctx.beginPath();ctx.moveTo(0,-76);ctx.lineTo(0,-32);ctx.stroke();ctx.strokeStyle=bone;ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(0,-78);ctx.lineTo(0,-31);ctx.stroke();
+    for(let i=0;i<6;i++){const y=-73+i*6,w=23-i*1.5;ctx.strokeStyle=shadow;ctx.lineWidth=6;ctx.beginPath();ctx.moveTo(-w,y);ctx.quadraticCurveTo(0,y+15,w,y);ctx.stroke();ctx.strokeStyle=bone;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(-w,y);ctx.quadraticCurveTo(0,y+15,w,y);ctx.stroke()}
+    ctx.strokeStyle=bone;ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(-24,-76);ctx.quadraticCurveTo(0,-84,24,-76);ctx.stroke();
+    for(const side of[-1,1]){
+      const swing=-side*step,shoulderX=side*24,shoulderY=-75;
+      const elbowX=armed?side*(32+attack*4):side*(29+swing*5),elbowY=armed?-57:-53+Math.abs(swing)*2;
+      const handX=armed?side*(41+attack*5):side*(27+swing*11),handY=armed?-43:-30+swing*3;
+      drawJointedLimb(shoulderX,shoulderY,elbowX,elbowY,handX,handY,shadow,bone,9,4.5,4.5);
+      if(armed){ctx.save();ctx.translate(handX,handY);ctx.rotate(side*(-.55+attack*1.5));ctx.strokeStyle="#d4fff3";ctx.shadowColor=colors.mint;ctx.shadowBlur=7;ctx.lineWidth=6;ctx.beginPath();ctx.moveTo(0,5);ctx.lineTo(0,-76);ctx.stroke();ctx.shadowBlur=0;ctx.strokeStyle="#4d6d6a";ctx.lineWidth=9;ctx.beginPath();ctx.moveTo(-11,-4);ctx.lineTo(11,-4);ctx.stroke();ctx.fillStyle="#202d31";ctx.fillRect(-5,2,10,18);ctx.restore()}
     }
+    ctx.fillStyle=bone;for(const [jx,jy] of [[-24,-75],[24,-75],[-10,-35],[10,-35]]){ctx.beginPath();ctx.arc(jx,jy,5,0,TAU);ctx.fill()}
+    if(e.boss){ctx.fillStyle="#28383c";for(const side of[-1,1]){ctx.beginPath();ctx.moveTo(side*20,-82);ctx.lineTo(side*42,-85);ctx.lineTo(side*27,-65);ctx.closePath();ctx.fill()}}
+    ctx.save();ctx.translate(headSway,-105);ctx.rotate(headTilt);
+    ctx.fillStyle=shadow;ctx.beginPath();ctx.ellipse(0,0,29,28,0,0,TAU);ctx.fill();ctx.fillStyle=bone;ctx.beginPath();ctx.moveTo(-24,-12);ctx.quadraticCurveTo(-27,11,-16,19);ctx.lineTo(-12,29);ctx.lineTo(14,27);ctx.lineTo(17,18);ctx.quadraticCurveTo(28,8,23,-13);ctx.quadraticCurveTo(0,-28,-24,-12);ctx.fill();
+    ctx.fillStyle="#101a20";ctx.beginPath();ctx.ellipse(-10,-3,8,10,-.16,0,TAU);ctx.ellipse(10,-2,8,10,.16,0,TAU);ctx.fill();ctx.beginPath();ctx.moveTo(-5,10);ctx.lineTo(0,2);ctx.lineTo(6,10);ctx.fill();
+    if(e.boss){ctx.fillStyle=colors.orange;ctx.shadowColor=colors.orange;ctx.shadowBlur=11;ctx.beginPath();ctx.arc(-10,-3,3,0,TAU);ctx.arc(10,-2,3,0,TAU);ctx.fill();ctx.shadowBlur=0}
+    ctx.fillStyle="#b8b8a7";ctx.beginPath();ctx.moveTo(-16,18);ctx.quadraticCurveTo(0,32,17,18);ctx.lineTo(14,29);ctx.quadraticCurveTo(0,36,-13,28);ctx.closePath();ctx.fill();ctx.strokeStyle="#5f6662";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-15,20);ctx.lineTo(15,20);for(let i=0;i<5;i++){ctx.moveTo(-11+i*6,20);ctx.lineTo(-10+i*6,28)}ctx.stroke();
+    ctx.strokeStyle="#68706b";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(6,-20);ctx.lineTo(-1,-7);ctx.lineTo(8,-10);ctx.moveTo(-20,8);ctx.lineTo(-12,12);ctx.stroke();ctx.fillStyle="#315246";ctx.beginPath();ctx.ellipse(19,8,5,3,.4,0,TAU);ctx.fill();ctx.restore();ctx.restore();
   }
 
   function drawEnemyHealth(e) {
