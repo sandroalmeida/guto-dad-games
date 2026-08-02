@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <meta name="theme-color" content="#06181f" />
+    <meta name="description" content="Nightfall Run — a fast, first-person zombie road shooter." />
+    <title>Nightfall Run</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800;900&family=DM+Sans:wght@500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main id="game-shell" aria-label="Nightfall Run game">
+      <canvas id="game" aria-label="Game action area"></canvas>
+
+      <section id="start-screen" class="screen start-screen">
+        <div class="menu-grain"></div>
+        <header class="brand-block">
+          <div class="eyebrow"><span></span> The road has teeth</div>
+          <h1>NIGHTFALL<br /><em>RUN</em></h1>
+          <p>Pick your survivor. Keep moving. Don’t miss.</p>
+        </header>
+
+        <div class="select-panel">
+          <div class="select-heading">
+            <span class="step-number">01</span>
+            <div><small>Survivor protocol</small><h2>Choose your runner</h2></div>
+          </div>
+
+          <div class="character-grid" role="radiogroup" aria-label="Choose a character">
+            <button class="character-card selected" data-character="augusto" role="radio" aria-checked="true">
+              <span class="character-art augusto-art" aria-hidden="true">
+                <i class="hair hair-back"></i><i class="head"></i><i class="ear left"></i><i class="ear right"></i><i class="mask"></i><i class="hair hair-front"></i>
+                <i class="headband"></i><i class="body"></i><i class="body-detail"></i><i class="scarf"></i><i class="belt"></i><i class="arm left"></i><i class="arm right"></i><i class="bracer left"></i><i class="bracer right"></i>
+              </span>
+              <span class="character-info">
+                <span class="number">01</span><span><strong>Augusto</strong><small>Young ninja • Steady aim</small></span>
+              </span>
+              <span class="select-mark">✓</span>
+            </button>
+
+            <button class="character-card" data-character="san" role="radio" aria-checked="false">
+              <span class="character-art san-art" aria-hidden="true">
+                <i class="bun"></i><i class="head"></i><i class="hair hair-top"></i><i class="beard"></i>
+                <i class="body"></i><i class="vest"></i><i class="shoulder-strap"></i><i class="chest-pouch one"></i><i class="chest-pouch two"></i><i class="arm left"></i><i class="arm right"></i><i class="glove left"></i><i class="glove right"></i>
+              </span>
+              <span class="character-info">
+                <span class="number">02</span><span><strong>San</strong><small>Black ops • Iron nerve</small></span>
+              </span>
+              <span class="select-mark">✓</span>
+            </button>
+          </div>
+
+          <button id="start-button" class="primary-button">
+            <span>Enter the dead road</span><i>→</i>
+          </button>
+          <p class="controls-hint"><kbd>Mouse</kbd> aim <b>•</b> <kbd>Space</kbd> fire <b>•</b> <kbd>Ctrl</kbd> bomb <b>•</b> <kbd>← →</kbd> weapon <b>•</b> <kbd>P</kbd> armory</p>
+        </div>
+
+        <div class="danger-ticker" aria-hidden="true">
+          <div>⚠ DEAD ROAD &nbsp; // &nbsp; SECTOR 09 &nbsp; // &nbsp; KEEP MOVING &nbsp; // &nbsp; NO EXTRACTION &nbsp; // &nbsp; DEAD ROAD &nbsp; // &nbsp; SECTOR 09 &nbsp; // &nbsp; KEEP MOVING</div>
+        </div>
+      </section>
+
+      <section id="hud" class="hud hidden" aria-label="Game status">
+        <div class="hud-top">
+          <div class="health-unit hud-glass">
+            <div class="portrait" id="hud-portrait"><span></span></div>
+            <div class="health-copy"><small>Vital signs</small><div class="health-track"><i id="health-bar"></i></div></div>
+            <strong id="health-value">100</strong>
+          </div>
+          <div class="run-unit">
+            <small>Distance</small>
+            <strong><span id="distance-value">0</span><em>m</em></strong>
+            <div id="threat-label">Threat: rising</div>
+          </div>
+          <div class="score-unit hud-glass">
+            <small>Score</small><strong id="score-value">000000</strong>
+            <span id="combo-value">×1 COMBO</span>
+          </div>
+        </div>
+
+        <div class="weapon-unit hud-glass">
+          <div id="weapon-icon" class="weapon-icon">⌁</div>
+          <div><small>Equipped</small><strong id="weapon-name">Sidearm</strong><span id="weapon-ammo">∞</span></div>
+          <i id="weapon-timer"></i>
+        </div>
+
+        <button id="bomb-button" class="bomb-button locked" aria-label="Use sky bomb" disabled>
+          <span class="bomb-orbit"><i>✦</i></span>
+          <span><small>Fall bomb</small><strong id="bomb-state">Find one</strong></span>
+          <kbd>Ctrl</kbd>
+        </button>
+
+        <button id="fire-button" class="fire-button" aria-label="Fire weapon"><span>Fire</span><kbd>Space</kbd></button>
+        <button id="pause-button" class="pause-button" aria-label="Pause game">Ⅱ</button>
+        <div id="crosshair" class="crosshair" aria-hidden="true"><i></i><i></i><i></i><i></i><b></b></div>
+        <div id="announcement" class="announcement" role="status"></div>
+        <div id="damage-flash"></div>
+      </section>
+
+      <section id="pause-screen" class="screen modal-screen hidden">
+        <div class="modal-card pause-card">
+          <small>Run suspended</small><h2>Field armory</h2>
+          <p>Unlocked weapons stay with you. Choose one here or cycle with the arrow keys.</p>
+          <div id="weapon-inventory" class="pause-inventory" aria-label="Weapon inventory">
+            <button class="inventory-slot unlocked active" data-weapon="Sidearm"><i>⌁</i><span><strong>Sidearm</strong><small>Reliable • Infinite</small></span><b>Equipped</b></button>
+            <button class="inventory-slot locked" data-weapon="Machine Gun" disabled><i>≋</i><span><strong>Machine Gun</strong><small>Rapid fire</small></span><b>Locked</b></button>
+            <button class="inventory-slot locked" data-weapon="Flamethrower" disabled><i>♨</i><span><strong>Flamethrower</strong><small>Touch range</small></span><b>Locked</b></button>
+            <button class="inventory-slot locked" data-weapon="Bazooka" disabled><i>➤</i><span><strong>Bazooka</strong><small>Far road only</small></span><b>Locked</b></button>
+          </div>
+          <button id="resume-button" class="primary-button"><span>Resume run</span><i>▶</i></button>
+          <button id="quit-button" class="text-button">Return to survivor select</button>
+        </div>
+      </section>
+
+      <section id="gameover-screen" class="screen modal-screen hidden">
+        <div class="modal-card gameover-card">
+          <small>Run terminated</small><h2>The road got you.</h2>
+          <div class="final-stats">
+            <div><small>Distance</small><strong id="final-distance">0m</strong></div>
+            <div><small>Eliminated</small><strong id="final-kills">0</strong></div>
+            <div><small>Final score</small><strong id="final-score">0</strong></div>
+          </div>
+          <button id="retry-button" class="primary-button"><span>Run it again</span><i>↻</i></button>
+          <button id="menu-button" class="text-button">Change survivor</button>
+        </div>
+      </section>
+    </main>
+    <script src="game.js"></script>
+  </body>
+</html>
