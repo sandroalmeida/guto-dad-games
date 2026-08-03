@@ -490,12 +490,16 @@
   function drawBackdrop() {
     const horizon = height * ROAD_HORIZON;
     if (roadImage.complete && roadImage.naturalWidth) {
-      const imageRatio = roadImage.naturalWidth / roadImage.naturalHeight, viewRatio = width / height;
-      let sx = 0, sy = 0, sw = roadImage.naturalWidth, sh = roadImage.naturalHeight;
-      if (viewRatio > imageRatio) { sh = sw / viewRatio; sy = (roadImage.naturalHeight - sh) / 2; }
-      else { sw = sh * viewRatio; sx = (roadImage.naturalWidth - sw) / 2; }
-      const distantSourceHeight = sh * .397;
-      ctx.drawImage(roadImage, sx, sy, sw, distantSourceHeight, 0, 0, width, horizon + height * .01);
+      // The crop is anchored on the gate: ARCH_X/ARCH_BASE_Y (fractions of the source image) are pinned
+      // to the road's vanishing point so the road always appears to run straight into the arch passage.
+      const ARCH_X = .506, ARCH_BASE_Y = .363;
+      const nw = roadImage.naturalWidth, nh = roadImage.naturalHeight;
+      const imageRatio = nw / nh, viewRatio = width / height;
+      let sx, sy, sw, sh;
+      if (viewRatio > imageRatio) { sw = nw * (1 - Math.abs(ARCH_X - .5) * 2); sh = sw / viewRatio; sy = (nh - sh) / 2; }
+      else { sh = nh; sw = sh * viewRatio; sy = 0; }
+      sx = Math.min(Math.max(ARCH_X * nw - sw / 2, 0), nw - sw);
+      ctx.drawImage(roadImage, sx, sy, sw, Math.max(1, ARCH_BASE_Y * nh - sy), 0, 0, width, horizon + height * .004);
     } else drawSky();
 
     const abyss = ctx.createLinearGradient(0, horizon, 0, height);
@@ -506,6 +510,9 @@
     fog.addColorStop(0, "rgba(78,255,195,.3)"); fog.addColorStop(.42, "rgba(23,140,127,.12)"); fog.addColorStop(1, "rgba(4,21,27,0)");
     ctx.fillStyle = fog; ctx.fillRect(0, horizon - height * .04, width, height * .3);
     drawMovingTrack();
+    const portal = ctx.createRadialGradient(width / 2, horizon, 0, width / 2, horizon, width * .085);
+    portal.addColorStop(0, "rgba(163,255,216,.42)"); portal.addColorStop(.55, "rgba(96,244,186,.16)"); portal.addColorStop(1, "rgba(80,230,175,0)");
+    ctx.fillStyle = portal; ctx.fillRect(width * .33, horizon - height * .1, width * .34, height * .22);
     drawEmbers(horizon);
     drawVignette();
   }
@@ -660,6 +667,28 @@
     }
     ctx.shadowBlur = 0;
 
+    // Large spidering fissures like the key art: tapered polylines with branches and a faint bevel edge.
+    for (let i = 0; i < 14; i++) {
+      const sample=movingSample(i,14),seed=sceneHash(sample.id),seed2=sceneHash(sample.id+19),seed3=sceneHash(sample.id+47),p=trackPoint(sample.depth);
+      const lane=seed*1.5-.75,len=p.curve*(55+seed2*170),dir=(seed3-.5)*1.7;
+      const pts=[{x:width/2+lane*p.half,y:p.y}];
+      for(let s=0;s<4;s++){const prev=pts[s];pts.push({x:prev.x+dir*len*(.14+sceneHash(sample.id+s*7)*.13)*(s%2?-.7:1),y:prev.y+len*(.19+sceneHash(sample.id+s*11)*.09)})}
+      ctx.lineCap="round";ctx.lineJoin="round";
+      ctx.strokeStyle=`rgba(126,148,146,${.05+p.curve*.12})`;ctx.lineWidth=1+p.curve*3;
+      ctx.beginPath();ctx.moveTo(pts[0].x+1,pts[0].y+1.4);for(const q of pts.slice(1))ctx.lineTo(q.x+1,q.y+1.4);ctx.stroke();
+      const baseW=(1.7+seed2*3.6)*p.curve+.4;
+      for(let s=0;s<4;s++){
+        ctx.strokeStyle=`rgba(4,10,14,${(.2+p.curve*.55)*(1-s*.13)})`;ctx.lineWidth=Math.max(.4,baseW*(1-s*.2));
+        ctx.beginPath();ctx.moveTo(pts[s].x,pts[s].y);ctx.lineTo(pts[s+1].x,pts[s+1].y);ctx.stroke();
+        if(s<2){
+          const m=pts[s+1],bl=len*(.5-s*.15);
+          ctx.lineWidth=Math.max(.3,baseW*.45);
+          ctx.beginPath();ctx.moveTo(m.x,m.y);ctx.lineTo(m.x-dir*bl*.5,m.y+bl*.32);ctx.stroke();
+          if(seed2>.4){ctx.beginPath();ctx.moveTo(m.x,m.y);ctx.lineTo(m.x+dir*bl*.3,m.y+bl*.4);ctx.stroke()}
+        }
+      }
+    }
+
     // World-space crack clusters get a new deterministic shape only when they recycle at the portal.
     for (let i = 0; i < 26; i++) {
       const sample=movingSample(i,26),seed=sceneHash(sample.id),seed2=sceneHash(sample.id+19),seed3=sceneHash(sample.id+47),p=trackPoint(sample.depth);
@@ -684,7 +713,8 @@
     const anchor=trackPoint(0,side*.985),posts=[anchor];anchor.id=-1;anchor.tilt=0;anchor.height=8;anchor.width=3;
     for (let i = 0; i < 8; i++) {
       const sample=movingSample(i,8),p=trackPoint(sample.depth,side*.985),variation=sceneHash(sample.id+side*13);
-      p.id=sample.id;p.tilt=(variation-.5)*p.curve*14;p.height=(11+p.curve*164)*(.9+sceneHash(sample.id+7)*.15);p.width=6+p.curve*35;posts.push(p);
+      p.id=sample.id;p.tilt=(variation-.5)*p.curve*14;p.height=(11+p.curve*164)*(.9+sceneHash(sample.id+7)*.15);p.width=6+p.curve*35;
+      p.broken=sceneHash(sample.id+side*7)>.8;if(p.broken)p.height*=.5+sceneHash(sample.id+3)*.28;posts.push(p);
     }
     posts.sort((a,b) => a.depth - b.depth);
 
@@ -692,34 +722,56 @@
     for (let i = 0; i < posts.length - 1; i++) {
       const a = posts[i], b = posts[i+1];
       for (const level of [.76,.42]) {
-        const thickness = 3 + ((a.curve+b.curve)/2) * 21;
+        const thickness = 3.5 + ((a.curve+b.curve)/2) * 23;
         if (level === .76 && sceneHash(a.id+side*31) > .76 && b.curve > .25) continue;
-        drawWeatheredRail(a,b,level,thickness,side,i);
+        drawConcreteRail(a,b,level,thickness,side,i);
       }
     }
 
     for (const p of posts) {
       const w=p.width,h=p.height,topX=p.x+p.tilt;
       ctx.fillStyle="rgba(0,0,0,.3)";ctx.beginPath();ctx.ellipse(p.x+side*w*.4,p.y+2,w*1.25,2+p.curve*7,0,0,TAU);ctx.fill();
-      ctx.fillStyle="#1a1511";ctx.beginPath();ctx.moveTo(p.x-w*.74,p.y);ctx.lineTo(topX-w*.5,p.y-h);ctx.lineTo(topX+w*.39,p.y-h-p.curve*4);ctx.lineTo(p.x+w*.7,p.y);ctx.closePath();ctx.fill();
-      ctx.fillStyle=`rgba(82,66,50,${.85+p.curve*.15})`;ctx.beginPath();ctx.moveTo(p.x-side*w*.18,p.y);ctx.lineTo(topX-side*w*.16,p.y-h);ctx.lineTo(topX+side*w*.38,p.y-h-p.curve*4);ctx.lineTo(p.x+side*w*.48,p.y);ctx.closePath();ctx.fill();
-      ctx.strokeStyle=`rgba(158,134,96,${.2+p.curve*.3})`;ctx.lineWidth=1+p.curve*3;ctx.beginPath();ctx.moveTo(p.x-side*w*.16,p.y);ctx.lineTo(topX-side*w*.14,p.y-h*.96);ctx.stroke();
-      ctx.strokeStyle=`rgba(112,240,190,${.06+p.curve*.14})`;ctx.lineWidth=1+p.curve*1.6;ctx.beginPath();ctx.moveTo(p.x+side*w*.62,p.y);ctx.lineTo(topX+side*w*.42,p.y-h*.9);ctx.stroke();
-      ctx.fillStyle="#191009";ctx.beginPath();ctx.moveTo(topX-w*.63,p.y-h-3-p.curve*6);ctx.lineTo(topX+w*.5,p.y-h-5-p.curve*3);ctx.lineTo(topX+w*.62,p.y-h+2+p.curve*2);ctx.lineTo(topX-w*.57,p.y-h+4+p.curve*2);ctx.closePath();ctx.fill();
-      ctx.fillStyle=`rgba(186,164,122,${.3+p.curve*.3})`;ctx.beginPath();ctx.moveTo(topX-w*.63,p.y-h-3-p.curve*6);ctx.lineTo(topX+w*.5,p.y-h-5-p.curve*3);ctx.lineTo(topX+w*.52,p.y-h-2-p.curve*2.4);ctx.lineTo(topX-w*.6,p.y-h-p.curve*3.6);ctx.closePath();ctx.fill();
-      ctx.strokeStyle=`rgba(40,30,22,${.3+p.curve*.3})`;ctx.lineWidth=.5+p.curve*1.4;ctx.beginPath();ctx.moveTo(topX-side*w*.02,p.y-h*.86);ctx.lineTo(p.x+side*w*.06,p.y-h*.12);ctx.stroke();
+      ctx.fillStyle="#1b2327";ctx.beginPath();ctx.moveTo(p.x-w*.72,p.y);ctx.lineTo(topX-w*.55,p.y-h);ctx.lineTo(topX+w*.4,p.y-h);ctx.lineTo(p.x+w*.68,p.y);ctx.closePath();ctx.fill();
+      ctx.fillStyle=`rgba(96,113,112,${.86+p.curve*.14})`;ctx.beginPath();ctx.moveTo(p.x-side*w*.2,p.y);ctx.lineTo(topX-side*w*.18,p.y-h);ctx.lineTo(topX+side*w*.42,p.y-h);ctx.lineTo(p.x+side*w*.5,p.y);ctx.closePath();ctx.fill();
+      if (p.broken) {
+        ctx.fillStyle=`rgba(122,140,138,${.55+p.curve*.35})`;ctx.beginPath();ctx.moveTo(topX-w*.55,p.y-h);ctx.lineTo(topX-w*.28,p.y-h-w*(.28+p.curve*.2));ctx.lineTo(topX,p.y-h-w*.1);ctx.lineTo(topX+w*.2,p.y-h-w*.36);ctx.lineTo(topX+w*.42,p.y-h);ctx.closePath();ctx.fill();
+        ctx.strokeStyle="#20282c";ctx.lineWidth=Math.max(1,w*.07);ctx.beginPath();ctx.moveTo(topX+w*.06,p.y-h-w*.16);ctx.lineTo(topX+w*.26,p.y-h-w*.8);ctx.stroke();
+      } else {
+        const capH=Math.max(2,w*.32);
+        ctx.fillStyle="#26313a";ctx.fillRect(topX-w*.7,p.y-h-capH,w*1.4,capH+Math.max(1,p.curve*3));
+        ctx.fillStyle=`rgba(163,184,177,${.32+p.curve*.3})`;ctx.fillRect(topX-w*.7,p.y-h-capH-Math.max(1,capH*.42),w*1.4,Math.max(1,capH*.45));
+      }
+      ctx.strokeStyle=`rgba(17,25,29,${.25+p.curve*.35})`;ctx.lineWidth=.5+p.curve*1.2;ctx.beginPath();ctx.moveTo(topX-side*w*.04,p.y-h*.82);ctx.lineTo(p.x+side*w*.12,p.y-h*.46);ctx.lineTo(p.x-side*w*.08,p.y-h*.14);ctx.stroke();
+      ctx.strokeStyle=`rgba(112,240,190,${.05+p.curve*.12})`;ctx.lineWidth=1+p.curve*1.4;ctx.beginPath();ctx.moveTo(p.x+side*w*.6,p.y);ctx.lineTo(topX+side*w*.44,p.y-h*.92);ctx.stroke();
       ctx.fillStyle=`rgba(255,111,51,${.15+p.curve*.4})`;ctx.shadowColor="#ff5e2d";ctx.shadowBlur=p.curve*10;ctx.beginPath();ctx.arc(p.x-side*w*.1,p.y-h*.55,1+p.curve*2.5,0,TAU);ctx.fill();ctx.shadowBlur=0;
-      ctx.fillStyle="#28343a";for(const rockSide of[-1,1])for(let r=0;r<2;r++){ctx.beginPath();ctx.ellipse(p.x+rockSide*w*(.78+p.curve*(.42+r*.4)),p.y-r*p.curve*2,1+p.curve*(8+r*4),1+p.curve*(4+r*2),rockSide*.25,0,TAU);ctx.fill()}
+      ctx.fillStyle="#2e3b41";for(const rockSide of[-1,1])for(let r=0;r<2;r++){ctx.beginPath();ctx.ellipse(p.x+rockSide*w*(.78+p.curve*(.42+r*.4)),p.y-r*p.curve*2,1+p.curve*(8+r*4),1+p.curve*(4+r*2),rockSide*.25,0,TAU);ctx.fill()}
       ctx.strokeStyle=`rgba(140,190,175,${.05+p.curve*.12})`;ctx.lineWidth=1;ctx.beginPath();ctx.arc(p.x+side*w*.95,p.y-p.curve*2-1,1+p.curve*7,Math.PI*1.05,Math.PI*1.95);ctx.stroke();
     }
   }
 
-  function drawWeatheredRail(a,b,level,thickness,side,seed) {
+  function drawConcreteRail(a,b,level,thickness,side,seed) {
     const ax=a.x+a.tilt*.68,ay=a.y-a.height*level,bx=b.x+b.tilt*.68,by=b.y-b.height*level;
-    const bend=Math.sin((seed+1)*2.19+side)*thickness*.55,mx=(ax+bx)/2+side*bend,my=(ay+by)/2+bend*.28;
-    ctx.lineCap="square";ctx.lineJoin="bevel";ctx.strokeStyle="#140e0a";ctx.lineWidth=thickness*1.85;ctx.beginPath();ctx.moveTo(ax,ay);ctx.quadraticCurveTo(mx,my,bx,by);ctx.stroke();
-    ctx.strokeStyle=`rgba(92,74,56,${.88+b.curve*.12})`;ctx.lineWidth=thickness;ctx.beginPath();ctx.moveTo(ax,ay-thickness*.08);ctx.quadraticCurveTo(mx,my-thickness*.16,bx,by-thickness*.08);ctx.stroke();
-    ctx.strokeStyle=`rgba(190,162,118,${.18+b.curve*.3})`;ctx.lineWidth=Math.max(.5,thickness*.16);ctx.beginPath();ctx.moveTo(ax,ay-thickness*.38);ctx.quadraticCurveTo(mx,my-thickness*.42,bx,by-thickness*.38);ctx.stroke();
+    const spanSeed=sceneHash(a.id*1.7+side*29+level*53),broken=spanSeed>.74&&b.curve>.12;
+    const e1=.32+spanSeed*.16,e2=.6+spanSeed*.14;
+    const segments=broken?[[0,e1],[e2,1]]:[[0,1]];
+    ctx.lineCap="butt";
+    for(const seg of segments){
+      const x0=ax+(bx-ax)*seg[0],y0=ay+(by-ay)*seg[0],x1=ax+(bx-ax)*seg[1],y1=ay+(by-ay)*seg[1];
+      ctx.strokeStyle="#141b1f";ctx.lineWidth=thickness*1.6;ctx.beginPath();ctx.moveTo(x0,y0);ctx.lineTo(x1,y1);ctx.stroke();
+      ctx.strokeStyle=`rgba(90,106,106,${.9+b.curve*.1})`;ctx.lineWidth=thickness;ctx.beginPath();ctx.moveTo(x0,y0);ctx.lineTo(x1,y1);ctx.stroke();
+      ctx.strokeStyle=`rgba(158,180,172,${.18+b.curve*.28})`;ctx.lineWidth=Math.max(.5,thickness*.22);ctx.beginPath();ctx.moveTo(x0,y0-thickness*.33);ctx.lineTo(x1,y1-thickness*.33);ctx.stroke();
+      ctx.strokeStyle=`rgba(15,23,27,${.35+b.curve*.3})`;ctx.lineWidth=Math.max(.5,thickness*.2);ctx.beginPath();ctx.moveTo(x0,y0+thickness*.35);ctx.lineTo(x1,y1+thickness*.35);ctx.stroke();
+    }
+    if(broken){
+      const d1=Math.sign(bx-ax)||1;
+      ctx.fillStyle=`rgba(105,122,121,${.7+b.curve*.3})`;
+      for(const end of [[ax+(bx-ax)*e1,ay+(by-ay)*e1,d1],[ax+(bx-ax)*e2,ay+(by-ay)*e2,-d1]]){
+        ctx.beginPath();ctx.moveTo(end[0],end[1]-thickness*.5);ctx.lineTo(end[0]+end[2]*thickness*.7,end[1]-thickness*.05);ctx.lineTo(end[0]+end[2]*thickness*.25,end[1]+thickness*.3);ctx.lineTo(end[0],end[1]+thickness*.5);ctx.closePath();ctx.fill();
+      }
+      const gx=ax+(bx-ax)*((e1+e2)/2),groundY=a.y+(b.y-a.y)*((e1+e2)/2);
+      ctx.fillStyle="rgba(74,88,90,.9)";ctx.beginPath();ctx.ellipse(gx,groundY+1,thickness*.85,thickness*.3,.3,0,TAU);ctx.fill();
+      ctx.fillStyle="rgba(40,51,55,.9)";ctx.beginPath();ctx.ellipse(gx+thickness,groundY+2,thickness*.5,thickness*.22,-.2,0,TAU);ctx.fill();
+    }
   }
 
   function drawSky() {
