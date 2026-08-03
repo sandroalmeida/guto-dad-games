@@ -499,12 +499,109 @@
     } else drawSky();
 
     const abyss = ctx.createLinearGradient(0, horizon, 0, height);
-    abyss.addColorStop(0, "rgba(19,83,78,.12)"); abyss.addColorStop(.09, "rgba(8,49,50,.92)"); abyss.addColorStop(.45, "#071d24"); abyss.addColorStop(1, "#030b10");
+    abyss.addColorStop(0, "rgba(19,83,78,.12)"); abyss.addColorStop(.09, "rgba(10,54,54,.9)"); abyss.addColorStop(.45, "#082028"); abyss.addColorStop(1, "#040d13");
     ctx.fillStyle = abyss; ctx.fillRect(0, horizon, width, height - horizon);
+    drawSideEnvironment(horizon);
     const fog = ctx.createRadialGradient(width / 2, horizon, 0, width / 2, horizon, width * .42);
     fog.addColorStop(0, "rgba(78,255,195,.3)"); fog.addColorStop(.42, "rgba(23,140,127,.12)"); fog.addColorStop(1, "rgba(4,21,27,0)");
     ctx.fillStyle = fog; ctx.fillRect(0, horizon - height * .04, width, height * .3);
     drawMovingTrack();
+    drawEmbers(horizon);
+    drawVignette();
+  }
+
+  // Roadside dressing matching the key art: glowing fog banks, blocky cliffs, pines and dead snags framing the road.
+  function drawSideEnvironment(horizon) {
+    const drop = height - horizon;
+    for (const side of [-1, 1]) {
+      const sway = Math.sin(state.elapsed * .14 + side * 2.1) * width * .008;
+      const cx = width / 2 + side * width * .3 + sway;
+      let bank = ctx.createRadialGradient(cx, horizon + drop * .14, 0, cx, horizon + drop * .14, width * .3);
+      bank.addColorStop(0, "rgba(64,238,172,.32)"); bank.addColorStop(.45, "rgba(34,164,130,.15)"); bank.addColorStop(1, "rgba(10,60,58,0)");
+      ctx.fillStyle = bank; ctx.fillRect(0, horizon - drop * .06, width, drop * .74);
+      const lowX = width / 2 + side * width * .44 - sway;
+      bank = ctx.createRadialGradient(lowX, horizon + drop * .4, 0, lowX, horizon + drop * .4, width * .3);
+      bank.addColorStop(0, "rgba(46,198,150,.17)"); bank.addColorStop(1, "rgba(12,70,64,0)");
+      ctx.fillStyle = bank; ctx.fillRect(0, horizon, width, drop);
+    }
+    for (const side of [-1, 1]) {
+      drawCliff(side, horizon, "#0a2b33", true);
+      for (let i = 0; i < 5; i++) {
+        const seed = sceneHash(i * 5.3 + side * 17);
+        drawPine(width / 2 + side * width * (.2 + i * .075 + seed * .03), horizon + drop * (.08 + i * .085 + seed * .03), drop * (.05 + i * .028), i < 2 ? "#092028" : "#05161f");
+      }
+      drawCliff(side, horizon, "#050f16", false);
+      for (let i = 0; i < 3; i++) {
+        const seed = sceneHash(i * 9.4 + side * 23);
+        drawBranch(width / 2 + side * width * (.2 + i * .13 + seed * .05), horizon + drop * (.22 + i * .17 + seed * .06), drop * (.1 + i * .075), side);
+      }
+    }
+    // Soft mist knits the painted skyline into the drawn roadside so the horizon seam disappears.
+    const blend = ctx.createLinearGradient(0, horizon - drop * .05, 0, horizon + drop * .1);
+    blend.addColorStop(0, "rgba(46,196,150,0)"); blend.addColorStop(.45, "rgba(56,214,162,.16)"); blend.addColorStop(1, "rgba(46,180,142,0)");
+    ctx.fillStyle = blend; ctx.fillRect(0, horizon - drop * .05, width, drop * .15);
+  }
+
+  function drawCliff(side, horizon, color, far) {
+    const drop = height - horizon, steps = 8;
+    const startX = width / 2 + side * width * (far ? .05 : .075), startY = horizon + drop * (far ? .035 : .05);
+    const endX = side > 0 ? width + 30 : -30, endY = horizon + drop * (far ? .36 : .82);
+    const top = [];
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps, h1 = sceneHash(i * 3.7 + side * 11 + (far ? 3 : 47)), h2 = sceneHash(i * 7.3 + side * 5 + (far ? 19 : 71));
+      top.push({ x: startX + (endX - startX) * t, y: startY + (endY - startY) * Math.pow(t, 1.2) - h1 * drop * (far ? .05 : .1) * t, block: h2 });
+    }
+    ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(top[0].x, top[0].y);
+    for (let i = 1; i <= steps; i++) { const p = top[i], q = top[i - 1]; ctx.lineTo(p.x - (p.x - q.x) * .3, q.y + (p.y - q.y) * .2 + p.block * drop * .014); ctx.lineTo(p.x, p.y); }
+    ctx.lineTo(endX, height + 30); ctx.lineTo(startX, height + 30); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = far ? "rgba(112,255,205,.14)" : "rgba(96,224,182,.07)"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(top[0].x, top[0].y);
+    for (let i = 1; i <= steps; i++) ctx.lineTo(top[i].x, top[i].y);
+    ctx.stroke();
+  }
+
+  function drawPine(x, y, s, color) {
+    ctx.fillStyle = color;
+    ctx.fillRect(x - s * .09, y - s * .8, s * .18, s * .85);
+    for (let tier = 0; tier < 3; tier++) {
+      const topY = y - s * (3 - tier * .7), w = s * (.75 + tier * .45), bottomY = y - s * (1.35 - tier * .68);
+      ctx.beginPath(); ctx.moveTo(x, topY); ctx.lineTo(x - w, bottomY); ctx.lineTo(x + w, bottomY); ctx.closePath(); ctx.fill();
+    }
+  }
+
+  function drawBranch(x, y, s, side) {
+    const sway = Math.sin(state.elapsed * .7 + x) * s * .015;
+    ctx.strokeStyle = "#0a151b"; ctx.lineWidth = Math.max(1.5, s * .06); ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(x, y);
+    ctx.quadraticCurveTo(x + side * s * .18, y - s * .55, x + side * s * .42 + sway, y - s * .95);
+    ctx.moveTo(x + side * s * .1, y - s * .4); ctx.lineTo(x - side * s * .22 + sway, y - s * .8);
+    ctx.moveTo(x + side * s * .24, y - s * .66); ctx.lineTo(x + side * s * .55 + sway, y - s * .78);
+    ctx.stroke();
+  }
+
+  // Drifting sparks along the shoulders, echoing the small fires in the key art.
+  function drawEmbers(horizon) {
+    const drop = height - horizon;
+    ctx.save();
+    for (let i = 0; i < 14; i++) {
+      const seed = sceneHash(i * 13.7), seed2 = sceneHash(i * 29.3 + 5), side = i % 2 ? 1 : -1;
+      const t = (state.elapsed * (.05 + seed * .06) + seed2) % 1;
+      const p = trackPoint(.18 + seed * .75, side * (1.02 + seed2 * .35));
+      if (p.y < horizon + 6) continue;
+      const flicker = .55 + .45 * Math.sin(state.elapsed * (6 + seed * 5) + i * 9);
+      const alpha = Math.sin(t * Math.PI) * (.25 + p.curve * .5) * flicker;
+      if (alpha <= .02) continue;
+      ctx.globalAlpha = alpha; ctx.fillStyle = seed2 > .6 ? "#ffc46a" : "#ff7b3a";
+      ctx.shadowColor = "#ff6a2a"; ctx.shadowBlur = 6 + p.curve * 8;
+      ctx.beginPath(); ctx.arc(p.x + Math.sin(t * 9 + i) * 4 * p.curve, p.y - t * drop * .06 * (.5 + p.curve), .6 + p.curve * (1.6 + seed * 1.8), 0, TAU); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawVignette() {
+    const g = ctx.createRadialGradient(width / 2, height * .44, Math.min(width, height) * .42, width / 2, height * .5, Math.max(width, height) * .8);
+    g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(2,7,11,.4)");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, width, height);
   }
 
   function trackPoint(depth, side = 0) {
@@ -523,15 +620,27 @@
   function drawMovingTrack() {
     const horizon = height * ROAD_HORIZON, bottom = height * TRACK_BOTTOM, phase = state.roadOffset;
     const road = ctx.createLinearGradient(0, horizon, 0, height);
-    road.addColorStop(0, "#33464c"); road.addColorStop(.34, "#27363f"); road.addColorStop(1, "#151f2b");
+    road.addColorStop(0, "#3d5259"); road.addColorStop(.34, "#2b3b45"); road.addColorStop(1, "#161f2a");
     ctx.fillStyle = road; ctx.beginPath(); ctx.moveTo(width * .474, horizon); ctx.lineTo(width * .526, horizon); ctx.lineTo(width * 1.08, bottom); ctx.lineTo(-width * .08, bottom); ctx.closePath(); ctx.fill();
+    ctx.save(); ctx.clip();
+    const spill = ctx.createLinearGradient(0, horizon, 0, horizon + (height - horizon) * .55);
+    spill.addColorStop(0, "rgba(96,255,198,.3)"); spill.addColorStop(.4, "rgba(70,220,170,.1)"); spill.addColorStop(1, "rgba(40,150,120,0)");
+    ctx.fillStyle = spill; ctx.fillRect(0, horizon, width, (height - horizon) * .55);
+    ctx.restore();
 
     for (const side of [-1,1]) {
-      const shoulder=ctx.createLinearGradient(0,horizon,0,height);shoulder.addColorStop(0,"rgba(31,43,44,.65)");shoulder.addColorStop(1,"rgba(11,17,23,.96)");ctx.fillStyle=shoulder;
+      const shoulder=ctx.createLinearGradient(0,horizon,0,height);shoulder.addColorStop(0,"rgba(47,50,42,.6)");shoulder.addColorStop(1,"rgba(13,16,20,.96)");ctx.fillStyle=shoulder;
       ctx.beginPath();ctx.moveTo(width/2+side*width*.028,horizon);ctx.lineTo(width/2+side*width*.036,horizon);ctx.lineTo(width/2+side*width*.59,bottom);ctx.lineTo(width/2+side*width*.53,bottom);ctx.closePath();ctx.fill();
     }
-    ctx.strokeStyle = "rgba(91,123,117,.22)"; ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(146,166,159,.2)"; ctx.lineWidth = 2;
     ctx.beginPath();ctx.moveTo(width*.474,horizon);ctx.lineTo(-width*.08,bottom);ctx.moveTo(width*.526,horizon);ctx.lineTo(width*1.08,bottom);ctx.stroke();
+
+    // Crumbled pale chips break the asphalt borders like the key art's shattered edges.
+    for (const side of [-1, 1]) for (let i = 0; i < 9; i++) {
+      const sample = movingSample(i, 9, .96), seed = sceneHash(sample.id + side * 7), p = trackPoint(sample.depth, side * (.965 + seed * .07));
+      ctx.fillStyle = `rgba(150,168,162,${.04 + p.curve * .16})`;
+      ctx.beginPath(); ctx.ellipse(p.x, p.y, 1 + p.curve * (5 + seed * 9), .6 + p.curve * (2 + seed * 3), side * .5, 0, TAU); ctx.fill();
+    }
 
     // Broad, irregular repairs drift with the asphalt and avoid readable repeating bands.
     for (let i=0;i<15;i++) {
@@ -542,11 +651,11 @@
     }
 
     // These are the road's actual painted lane marks, sharing the same advancing depth as the slabs and fences.
-    ctx.shadowColor = "rgba(255,221,112,.4)"; ctx.shadowBlur = 5;
+    ctx.shadowColor = "rgba(255,206,84,.55)"; ctx.shadowBlur = 7;
     for (let i = 0; i < 10; i++) {
       const sample=movingSample(i,10),t1=sample.depth,t2=Math.min(1,t1+.025+t1*.075*(.8+sceneHash(sample.id)*.35)),p1=trackPoint(t1),p2=trackPoint(t2);
       const w1 = .7 + p1.curve * 7.5, w2 = .8 + p2.curve * 9.5;
-      ctx.fillStyle = `rgba(188,165,86,${.36 + p2.curve * .38})`; ctx.beginPath(); ctx.moveTo(width/2-w1,p1.y);ctx.lineTo(width/2+w1,p1.y);ctx.lineTo(width/2+w2,p2.y);ctx.lineTo(width/2-w2,p2.y);ctx.closePath();ctx.fill();
+      ctx.fillStyle = `rgba(236,197,92,${.5 + p2.curve * .4})`; ctx.beginPath(); ctx.moveTo(width/2-w1,p1.y);ctx.lineTo(width/2+w1,p1.y);ctx.lineTo(width/2+w2,p2.y);ctx.lineTo(width/2-w2,p2.y);ctx.closePath();ctx.fill();
       if (p2.curve > .24) { ctx.fillStyle=`rgba(38,49,52,${.3+p2.curve*.32})`;ctx.beginPath();ctx.moveTo(width/2-w2*.72,p1.y+(p2.y-p1.y)*.55);ctx.lineTo(width/2+w2*.18,p1.y+(p2.y-p1.y)*.46);ctx.lineTo(width/2+w2*.52,p1.y+(p2.y-p1.y)*.62);ctx.lineTo(width/2-w2*.44,p1.y+(p2.y-p1.y)*.69);ctx.closePath();ctx.fill(); }
     }
     ctx.shadowBlur = 0;
@@ -555,7 +664,7 @@
     for (let i = 0; i < 26; i++) {
       const sample=movingSample(i,26),seed=sceneHash(sample.id),seed2=sceneHash(sample.id+19),seed3=sceneHash(sample.id+47),p=trackPoint(sample.depth);
       const lane=seed*1.45-.725,x=width/2+lane*p.half,size=1+p.curve*(16+seed2*33),direction=(seed3-.5)*size*.58;
-      ctx.strokeStyle=`rgba(3,9,15,${.09+p.curve*.58})`;ctx.lineWidth=.45+p.curve*(1.8+seed2*1.8);ctx.lineCap="round";ctx.lineJoin="round";
+      ctx.strokeStyle=`rgba(3,9,15,${.12+p.curve*.62})`;ctx.lineWidth=.45+p.curve*(2+seed2*2);ctx.lineCap="round";ctx.lineJoin="round";
       ctx.beginPath();ctx.moveTo(x,p.y);ctx.lineTo(x+direction*.22,p.y+size*.23);ctx.lineTo(x-direction*.18,p.y+size*.51);ctx.lineTo(x+direction,p.y+size);ctx.stroke();
       if(seed2>.3){ctx.lineWidth*=.62;ctx.beginPath();ctx.moveTo(x+direction*.02,p.y+size*.43);ctx.lineTo(x-direction*.48,p.y+size*(.58+seed*.14));ctx.lineTo(x-direction*.64,p.y+size*(.72+seed3*.13));ctx.stroke()}
       if(seed3>.56){ctx.beginPath();ctx.moveTo(x+direction*.5,p.y+size*.72);ctx.lineTo(x+direction*.95,p.y+size*(.8+seed*.1));ctx.stroke()}
@@ -575,7 +684,7 @@
     const anchor=trackPoint(0,side*.985),posts=[anchor];anchor.id=-1;anchor.tilt=0;anchor.height=8;anchor.width=3;
     for (let i = 0; i < 8; i++) {
       const sample=movingSample(i,8),p=trackPoint(sample.depth,side*.985),variation=sceneHash(sample.id+side*13);
-      p.id=sample.id;p.tilt=(variation-.5)*p.curve*14;p.height=(11+p.curve*164)*(.9+sceneHash(sample.id+7)*.15);p.width=5+p.curve*31;posts.push(p);
+      p.id=sample.id;p.tilt=(variation-.5)*p.curve*14;p.height=(11+p.curve*164)*(.9+sceneHash(sample.id+7)*.15);p.width=6+p.curve*35;posts.push(p);
     }
     posts.sort((a,b) => a.depth - b.depth);
 
@@ -583,7 +692,7 @@
     for (let i = 0; i < posts.length - 1; i++) {
       const a = posts[i], b = posts[i+1];
       for (const level of [.76,.42]) {
-        const thickness = 3 + ((a.curve+b.curve)/2) * 18;
+        const thickness = 3 + ((a.curve+b.curve)/2) * 21;
         if (level === .76 && sceneHash(a.id+side*31) > .76 && b.curve > .25) continue;
         drawWeatheredRail(a,b,level,thickness,side,i);
       }
@@ -592,21 +701,25 @@
     for (const p of posts) {
       const w=p.width,h=p.height,topX=p.x+p.tilt;
       ctx.fillStyle="rgba(0,0,0,.3)";ctx.beginPath();ctx.ellipse(p.x+side*w*.4,p.y+2,w*1.25,2+p.curve*7,0,0,TAU);ctx.fill();
-      ctx.fillStyle="#131a1e";ctx.beginPath();ctx.moveTo(p.x-w*.74,p.y);ctx.lineTo(topX-w*.5,p.y-h);ctx.lineTo(topX+w*.39,p.y-h-p.curve*4);ctx.lineTo(p.x+w*.7,p.y);ctx.closePath();ctx.fill();
-      ctx.fillStyle=`rgba(59,49,43,${.82+p.curve*.12})`;ctx.beginPath();ctx.moveTo(p.x-side*w*.18,p.y);ctx.lineTo(topX-side*w*.16,p.y-h);ctx.lineTo(topX+side*w*.38,p.y-h-p.curve*4);ctx.lineTo(p.x+side*w*.48,p.y);ctx.closePath();ctx.fill();
-      ctx.fillStyle="#0b1114";ctx.beginPath();ctx.moveTo(topX-w*.63,p.y-h-3-p.curve*6);ctx.lineTo(topX+w*.5,p.y-h-5-p.curve*3);ctx.lineTo(topX+w*.62,p.y-h+2+p.curve*2);ctx.lineTo(topX-w*.57,p.y-h+4+p.curve*2);ctx.closePath();ctx.fill();
-      ctx.strokeStyle=`rgba(153,112,74,${.2+p.curve*.3})`;ctx.lineWidth=.5+p.curve*2;ctx.beginPath();ctx.moveTo(topX-side*w*.08,p.y-h*.88);ctx.lineTo(p.x-side*w*.02,p.y-h*.14);ctx.stroke();
+      ctx.fillStyle="#1a1511";ctx.beginPath();ctx.moveTo(p.x-w*.74,p.y);ctx.lineTo(topX-w*.5,p.y-h);ctx.lineTo(topX+w*.39,p.y-h-p.curve*4);ctx.lineTo(p.x+w*.7,p.y);ctx.closePath();ctx.fill();
+      ctx.fillStyle=`rgba(82,66,50,${.85+p.curve*.15})`;ctx.beginPath();ctx.moveTo(p.x-side*w*.18,p.y);ctx.lineTo(topX-side*w*.16,p.y-h);ctx.lineTo(topX+side*w*.38,p.y-h-p.curve*4);ctx.lineTo(p.x+side*w*.48,p.y);ctx.closePath();ctx.fill();
+      ctx.strokeStyle=`rgba(158,134,96,${.2+p.curve*.3})`;ctx.lineWidth=1+p.curve*3;ctx.beginPath();ctx.moveTo(p.x-side*w*.16,p.y);ctx.lineTo(topX-side*w*.14,p.y-h*.96);ctx.stroke();
+      ctx.strokeStyle=`rgba(112,240,190,${.06+p.curve*.14})`;ctx.lineWidth=1+p.curve*1.6;ctx.beginPath();ctx.moveTo(p.x+side*w*.62,p.y);ctx.lineTo(topX+side*w*.42,p.y-h*.9);ctx.stroke();
+      ctx.fillStyle="#191009";ctx.beginPath();ctx.moveTo(topX-w*.63,p.y-h-3-p.curve*6);ctx.lineTo(topX+w*.5,p.y-h-5-p.curve*3);ctx.lineTo(topX+w*.62,p.y-h+2+p.curve*2);ctx.lineTo(topX-w*.57,p.y-h+4+p.curve*2);ctx.closePath();ctx.fill();
+      ctx.fillStyle=`rgba(186,164,122,${.3+p.curve*.3})`;ctx.beginPath();ctx.moveTo(topX-w*.63,p.y-h-3-p.curve*6);ctx.lineTo(topX+w*.5,p.y-h-5-p.curve*3);ctx.lineTo(topX+w*.52,p.y-h-2-p.curve*2.4);ctx.lineTo(topX-w*.6,p.y-h-p.curve*3.6);ctx.closePath();ctx.fill();
+      ctx.strokeStyle=`rgba(40,30,22,${.3+p.curve*.3})`;ctx.lineWidth=.5+p.curve*1.4;ctx.beginPath();ctx.moveTo(topX-side*w*.02,p.y-h*.86);ctx.lineTo(p.x+side*w*.06,p.y-h*.12);ctx.stroke();
       ctx.fillStyle=`rgba(255,111,51,${.15+p.curve*.4})`;ctx.shadowColor="#ff5e2d";ctx.shadowBlur=p.curve*10;ctx.beginPath();ctx.arc(p.x-side*w*.1,p.y-h*.55,1+p.curve*2.5,0,TAU);ctx.fill();ctx.shadowBlur=0;
-      ctx.fillStyle="#263238";for(const rockSide of[-1,1])for(let r=0;r<2;r++){ctx.beginPath();ctx.ellipse(p.x+rockSide*w*(.78+p.curve*(.42+r*.4)),p.y-r*p.curve*2,1+p.curve*(8+r*4),1+p.curve*(4+r*2),rockSide*.25,0,TAU);ctx.fill()}
+      ctx.fillStyle="#28343a";for(const rockSide of[-1,1])for(let r=0;r<2;r++){ctx.beginPath();ctx.ellipse(p.x+rockSide*w*(.78+p.curve*(.42+r*.4)),p.y-r*p.curve*2,1+p.curve*(8+r*4),1+p.curve*(4+r*2),rockSide*.25,0,TAU);ctx.fill()}
+      ctx.strokeStyle=`rgba(140,190,175,${.05+p.curve*.12})`;ctx.lineWidth=1;ctx.beginPath();ctx.arc(p.x+side*w*.95,p.y-p.curve*2-1,1+p.curve*7,Math.PI*1.05,Math.PI*1.95);ctx.stroke();
     }
   }
 
   function drawWeatheredRail(a,b,level,thickness,side,seed) {
     const ax=a.x+a.tilt*.68,ay=a.y-a.height*level,bx=b.x+b.tilt*.68,by=b.y-b.height*level;
     const bend=Math.sin((seed+1)*2.19+side)*thickness*.55,mx=(ax+bx)/2+side*bend,my=(ay+by)/2+bend*.28;
-    ctx.lineCap="square";ctx.lineJoin="bevel";ctx.strokeStyle="#0a1114";ctx.lineWidth=thickness*1.85;ctx.beginPath();ctx.moveTo(ax,ay);ctx.quadraticCurveTo(mx,my,bx,by);ctx.stroke();
-    ctx.strokeStyle=`rgba(61,51,44,${.86+b.curve*.1})`;ctx.lineWidth=thickness;ctx.beginPath();ctx.moveTo(ax,ay-thickness*.08);ctx.quadraticCurveTo(mx,my-thickness*.16,bx,by-thickness*.08);ctx.stroke();
-    ctx.strokeStyle=`rgba(139,119,91,${.13+b.curve*.23})`;ctx.lineWidth=Math.max(.5,thickness*.16);ctx.beginPath();ctx.moveTo(ax,ay-thickness*.38);ctx.quadraticCurveTo(mx,my-thickness*.42,bx,by-thickness*.38);ctx.stroke();
+    ctx.lineCap="square";ctx.lineJoin="bevel";ctx.strokeStyle="#140e0a";ctx.lineWidth=thickness*1.85;ctx.beginPath();ctx.moveTo(ax,ay);ctx.quadraticCurveTo(mx,my,bx,by);ctx.stroke();
+    ctx.strokeStyle=`rgba(92,74,56,${.88+b.curve*.12})`;ctx.lineWidth=thickness;ctx.beginPath();ctx.moveTo(ax,ay-thickness*.08);ctx.quadraticCurveTo(mx,my-thickness*.16,bx,by-thickness*.08);ctx.stroke();
+    ctx.strokeStyle=`rgba(190,162,118,${.18+b.curve*.3})`;ctx.lineWidth=Math.max(.5,thickness*.16);ctx.beginPath();ctx.moveTo(ax,ay-thickness*.38);ctx.quadraticCurveTo(mx,my-thickness*.42,bx,by-thickness*.38);ctx.stroke();
   }
 
   function drawSky() {
