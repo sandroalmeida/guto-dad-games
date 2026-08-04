@@ -36,9 +36,10 @@
     Sidearm: { icon: "⌁", cooldown: 0.22, damage: 1, label: "INFINITE" },
     "Machine Gun": { icon: "≋", cooldown: 0.075, damage: 0.62, label: "FULL AUTO" },
     Flamethrower: { icon: "♨", cooldown: 0.055, damage: 0.2, label: "MID-RANGE FLAME" },
+    Shotgun: { icon: "⁙", cooldown: 0.55, damage: 3, label: "ONE-SHELL KILL" },
     Bazooka: { icon: "➤", cooldown: 0.72, damage: 8, label: "FAR-RANGE ONLY" }
   };
-  const weaponUnlockOrder = ["Machine Gun", "Flamethrower", "Bazooka"];
+  const weaponUnlockOrder = ["Machine Gun", "Flamethrower", "Shotgun", "Bazooka"];
 
   function resize() {
     width = innerWidth; height = innerHeight; dpr = Math.min(devicePixelRatio || 1, 2);
@@ -89,38 +90,58 @@
     if (audio.state === "suspended") audio.resume();
   }
 
+  // Slow doom soundscape: breathing tritone drones, a heartbeat pulse, a sparse echoed motif and distant booms.
   function startMusic() {
     if (!audio || music) return;
     const gain = audio.createGain(), filter = audio.createBiquadFilter();
-    gain.gain.setValueAtTime(.001, audio.currentTime); gain.gain.exponentialRampToValueAtTime(.12, audio.currentTime + 1.2);
-    filter.type = "lowpass"; filter.frequency.value = 880; filter.Q.value = 1.35; filter.connect(gain); gain.connect(audio.destination);
-    const drones = [55, 82.4, 110].map((frequency, index) => {
-      const osc = audio.createOscillator(), oscGain = audio.createGain(); osc.type = index ? "triangle" : "sawtooth";
-      osc.frequency.value = frequency; osc.detune.value = [-8, 5, -3][index]; oscGain.gain.value = [.22, .13, .065][index];
+    gain.gain.setValueAtTime(.001, audio.currentTime); gain.gain.exponentialRampToValueAtTime(.12, audio.currentTime + 2);
+    filter.type = "lowpass"; filter.frequency.value = 640; filter.Q.value = .8; filter.connect(gain); gain.connect(audio.destination);
+    const delay = audio.createDelay(1.2), delayFeedback = audio.createGain(), delayTone = audio.createBiquadFilter();
+    delay.delayTime.value = .52; delayFeedback.gain.value = .42; delayTone.type = "lowpass"; delayTone.frequency.value = 900;
+    delay.connect(delayTone); delayTone.connect(delayFeedback); delayFeedback.connect(delay); delayTone.connect(gain);
+    const drones = [[41.2, .1, "sine"], [58.3, .05, "sine"], [27.5, .09, "triangle"]].map(([frequency, level, type]) => {
+      const osc = audio.createOscillator(), oscGain = audio.createGain();
+      osc.type = type; osc.frequency.value = frequency; oscGain.gain.value = level;
       osc.connect(oscGain); oscGain.connect(filter); osc.start(); return osc;
     });
-    music = { gain, filter, drones, step: 0, timer: setInterval(scheduleMusicBeat, 760) };
+    const lfo = audio.createOscillator(), lfoGain = audio.createGain();
+    lfo.type = "sine"; lfo.frequency.value = .05; lfoGain.gain.value = 210; lfo.connect(lfoGain); lfoGain.connect(filter.frequency); lfo.start();
+    drones.push(lfo);
+    music = { gain, filter, delay, delayFeedback, drones, step: 0, timer: setInterval(scheduleMusicBeat, 1000) };
     scheduleMusicBeat();
   }
 
   function scheduleMusicBeat() {
     if (!audio || !music || !state.running || state.paused) return;
-    const now = audio.currentTime, notes = [55, 55, 49, 41.2, 55, 65.4, 49, 36.7], note = notes[music.step++ % notes.length];
-    const osc = audio.createOscillator(), gain = audio.createGain(); osc.type = "square"; osc.frequency.value = note;
-    gain.gain.setValueAtTime(.34, now); gain.gain.exponentialRampToValueAtTime(.001, now + .5); osc.connect(gain); gain.connect(music.filter); osc.start(now); osc.stop(now + .52);
-    const hit = audio.createOscillator(), hitGain = audio.createGain(); hit.type = "sine"; hit.frequency.setValueAtTime(72, now); hit.frequency.exponentialRampToValueAtTime(31, now + .16);
-    hitGain.gain.setValueAtTime(.3, now); hitGain.gain.exponentialRampToValueAtTime(.001, now + .24); hit.connect(hitGain); hitGain.connect(music.gain); hit.start(now); hit.stop(now + .26);
-    if (music.step % 4 === 1) {
-      const buffer = audio.createBuffer(1, Math.floor(audio.sampleRate * .16), audio.sampleRate), data = buffer.getChannelData(0);
-      for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / data.length, 3);
-      const noise = audio.createBufferSource(), noiseGain = audio.createGain(); noise.buffer = buffer; noiseGain.gain.value = .12;
-      noise.connect(noiseGain); noiseGain.connect(music.filter); noise.start(now);
+    const now = audio.currentTime, step = music.step++;
+    for (const [offset, strength] of [[0, .3], [.34, .17]]) {
+      const thump = audio.createOscillator(), thumpGain = audio.createGain();
+      thump.type = "sine"; thump.frequency.setValueAtTime(58, now + offset); thump.frequency.exponentialRampToValueAtTime(27, now + offset + .28);
+      thumpGain.gain.setValueAtTime(.0001, now + offset); thumpGain.gain.linearRampToValueAtTime(strength, now + offset + .025); thumpGain.gain.exponentialRampToValueAtTime(.0001, now + offset + .5);
+      thump.connect(thumpGain); thumpGain.connect(music.gain); thump.start(now + offset); thump.stop(now + offset + .55);
+    }
+    if (step % 4 === 1) {
+      const notes = [82.4, 87.3, 82.4, 65.4, 98, 87.3, 82.4, 61.7], note = notes[(step >> 2) % notes.length];
+      for (const detune of [0, 7]) {
+        const osc = audio.createOscillator(), oscGain = audio.createGain();
+        osc.type = "triangle"; osc.frequency.value = note; osc.detune.value = detune;
+        oscGain.gain.setValueAtTime(.0001, now); oscGain.gain.linearRampToValueAtTime(.16, now + .6); oscGain.gain.exponentialRampToValueAtTime(.0001, now + 3.4);
+        osc.connect(oscGain); oscGain.connect(music.filter); oscGain.connect(music.delay);
+        osc.start(now); osc.stop(now + 3.5);
+      }
+    }
+    if (step % 9 === 5) {
+      const boom = audio.createOscillator(), boomGain = audio.createGain();
+      boom.type = "sine"; boom.frequency.setValueAtTime(44, now); boom.frequency.exponentialRampToValueAtTime(21, now + 1.6);
+      boomGain.gain.setValueAtTime(.0001, now); boomGain.gain.linearRampToValueAtTime(.24, now + .18); boomGain.gain.exponentialRampToValueAtTime(.0001, now + 1.9);
+      boom.connect(boomGain); boomGain.connect(music.gain); boom.start(now); boom.stop(now + 2);
     }
   }
 
   function stopMusic() {
     if (!music || !audio) return;
     const active = music; music = null; clearInterval(active.timer); active.gain.gain.setTargetAtTime(.001, audio.currentTime, .08);
+    if (active.delayFeedback) active.delayFeedback.gain.setTargetAtTime(0, audio.currentTime, .05);
     setTimeout(() => active.drones.forEach(osc => { try { osc.stop(); } catch {} }), 350);
   }
 
@@ -145,14 +166,45 @@
     const noise = audio.createBufferSource(); noise.buffer = buffer; noise.connect(filter); noise.start(now);
   }
 
+  function noiseBuffer(duration) {
+    const buffer = audio.createBuffer(1, Math.max(1, Math.floor(audio.sampleRate * duration)), audio.sampleRate), data = buffer.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / data.length, 1.4);
+    return buffer;
+  }
+
+  function noiseHit(duration, filterType, frequencyStart, frequencyEnd, peak, delay = 0, q = 1) {
+    const now = audio.currentTime + delay;
+    const src = audio.createBufferSource(), filter = audio.createBiquadFilter(), gain = audio.createGain();
+    src.buffer = noiseBuffer(duration); filter.type = filterType; filter.Q.value = q;
+    filter.frequency.setValueAtTime(frequencyStart, now); filter.frequency.exponentialRampToValueAtTime(Math.max(20, frequencyEnd), now + duration);
+    gain.gain.setValueAtTime(peak, now); gain.gain.exponentialRampToValueAtTime(.001, now + duration);
+    src.connect(filter); filter.connect(gain); gain.connect(audio.destination); src.start(now);
+  }
+
+  function toneHit(type, frequencyStart, frequencyEnd, duration, peak, delay = 0) {
+    const now = audio.currentTime + delay, osc = audio.createOscillator(), gain = audio.createGain();
+    osc.type = type; osc.frequency.setValueAtTime(frequencyStart, now); osc.frequency.exponentialRampToValueAtTime(Math.max(18, frequencyEnd), now + duration);
+    gain.gain.setValueAtTime(peak, now); gain.gain.exponentialRampToValueAtTime(.001, now + duration);
+    osc.connect(gain); gain.connect(audio.destination); osc.start(now); osc.stop(now + duration + .02);
+  }
+
   function sfx(type) {
     if (!audio) return;
+    switch (type) {
+      case "shot": noiseHit(.09, "highpass", 900, 380, .1); toneHit("square", 165, 70, .07, .06); return;
+      case "mgshot": noiseHit(.06, "highpass", 1200, 500, .07); toneHit("square", 190, 95, .05, .045); return;
+      case "flame": noiseHit(.2, "lowpass", 900, 260, .06, 0, 1.6); return;
+      case "shotgun": noiseHit(.3, "lowpass", 1500, 200, .3); noiseHit(.12, "highpass", 700, 300, .12); toneHit("sine", 110, 34, .34, .3); return;
+      case "rocket": noiseHit(.5, "bandpass", 500, 130, .18, 0, 1.2); toneHit("sawtooth", 88, 26, .45, .12); return;
+      case "squish": noiseHit(.2, "lowpass", 420, 90, .17, 0, 1.8); toneHit("sine", 160, 55, .18, .1); return;
+      case "bones": noiseHit(.035, "bandpass", 2100, 1500, .14, 0, 3); noiseHit(.03, "bandpass", 2600, 1700, .11, .07, 3); noiseHit(.045, "bandpass", 1700, 1100, .13, .14, 3); toneHit("triangle", 210, 90, .12, .05, .02); return;
+    }
     const now = audio.currentTime, osc = audio.createOscillator(), gain = audio.createGain();
     osc.connect(gain); gain.connect(audio.destination); osc.type = type === "hit" ? "square" : "sawtooth";
     const cfg = {
-      shot: [125, 62, .04, .055], hit: [95, 48, .035, .035], kill: [220, 90, .08, .06],
+      hit: [95, 48, .035, .035], kill: [220, 90, .08, .06],
       reward: [480, 860, .22, .08], wrong: [140, 65, .25, .08], hurt: [62, 38, .2, .13],
-      rocket: [75, 26, .35, .15], bomb: [48, 19, .7, .18], down: [105, 28, .8, .1]
+      bomb: [48, 19, .7, .18], down: [105, 28, .8, .1]
     }[type] || [180, 90, .1, .05];
     osc.frequency.setValueAtTime(cfg[0], now); osc.frequency.exponentialRampToValueAtTime(cfg[1], now + cfg[2]);
     gain.gain.setValueAtTime(cfg[3], now); gain.gain.exponentialRampToValueAtTime(.001, now + cfg[2]);
@@ -296,7 +348,13 @@
     for (const enemy of state.enemies) {
       if (enemy.dead) {
         enemy.dying += dt;
-        if (enemy.corpse) enemy.z += dt * (enemy.boss ? .28 : .34);
+        if (enemy.corpse) {
+          enemy.z += dt * (enemy.boss ? .28 : .34);
+          if (!enemy.underfootSfx && enemy.z > 1.03) {
+            enemy.underfootSfx = true;
+            sfx(enemy.kind === "skeleton" || enemy.kind === "dualist" ? "bones" : "squish");
+          }
+        }
         updateDeathParts(enemy, dt); continue;
       }
       enemy.hit = Math.max(0, enemy.hit - dt * 4); enemy.phase += dt * (4 + enemy.speed * 30);
@@ -343,6 +401,7 @@
     if (answerQuestion(x, y)) return;
     if (state.weapon === "Bazooka") fireRocket(x, y);
     else if (state.weapon === "Flamethrower") fireFlame(x, y);
+    else if (state.weapon === "Shotgun") fireShotgun(x, y);
     else fireBullet(x, y, data.damage, automatic);
   }
 
@@ -356,7 +415,7 @@
   }
 
   function fireBullet(x, y, damage, automatic) {
-    sfx("shot"); state.shake = Math.max(state.shake, automatic ? 1.8 : 3);
+    sfx(state.weapon === "Machine Gun" ? "mgshot" : "shot"); state.shake = Math.max(state.shake, automatic ? 1.8 : 3);
     const muzzle = playerMuzzle();
     state.tracers.push({ x1: muzzle.x, y1: muzzle.y, x2: x, y2: y, life: .075, max: .075, color: colors.mint });
     const target = getTarget(x, y);
@@ -364,7 +423,7 @@
   }
 
   function fireFlame(x, y) {
-    state.shake = Math.max(state.shake, 2); sfx("shot");
+    state.shake = Math.max(state.shake, 2); sfx("flame");
     const muzzle = playerMuzzle(), dx = x - muzzle.x, dy = y - muzzle.y, distance = Math.max(1, Math.hypot(dx, dy));
     const flameRange = height * .58, reach = Math.min(flameRange, distance), end = { x: muzzle.x + dx / distance * reach, y: muzzle.y + dy / distance * reach };
     state.tracers.push({ x1: muzzle.x, y1: muzzle.y, x2: end.x, y2: end.y, life: .11, max: .11, color: colors.orange, flame: true });
@@ -376,6 +435,21 @@
       }
     }
     for (let i = 0; i < 5; i++) state.particles.push({ x: end.x + rand(-22, 22), y: end.y + rand(-22, 22), vx: rand(-30, 30), vy: rand(-75, -20), gravity: -30, size: rand(8, 18), life: .3 + Math.random() * .3, color: Math.random() < .5 ? "#ffb33b" : "#ff5038", fire: true });
+  }
+
+  function fireShotgun(x, y) {
+    sfx("shotgun"); state.shake = Math.max(state.shake, 9);
+    const muzzle = playerMuzzle(), radius = 74;
+    for (let i = -2; i <= 2; i++) {
+      state.tracers.push({ x1: muzzle.x, y1: muzzle.y, x2: x + i * 26 + rand(-6, 6), y2: y + rand(-14, 14), life: .09, max: .09, color: "#ffe9b0" });
+    }
+    spark(x, y, "#ffd9a0", 10);
+    for (const e of state.enemies) {
+      if (e.dead || !e.screen) continue;
+      if (Math.hypot(x - e.screen.x, y - (e.screen.y - 40 * e.screen.scale)) < radius + e.screen.scale * (e.boss ? 46 : 30)) {
+        damageEnemy(e, weaponData.Shotgun.damage * (e.boss ? 2 : 1), e.screen.x, e.screen.y, true);
+      }
+    }
   }
 
   function fireRocket(x, y) {
@@ -877,6 +951,8 @@
     ctx.fillStyle="#742c5e";ctx.beginPath();ctx.moveTo(-28,-82);ctx.lineTo(-7,-91);ctx.lineTo(2,-77);ctx.lineTo(17,-88);ctx.lineTo(30,-78);ctx.lineTo(27,-66);ctx.lineTo(-29,-66);ctx.closePath();ctx.fill();
     ctx.strokeStyle="#a44d82";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-22,-72);ctx.lineTo(-8,-67);ctx.moveTo(5,-73);ctx.lineTo(20,-69);ctx.stroke();
     ctx.fillStyle="#281a22";ctx.beginPath();ctx.ellipse(17,-61,8,11,.35,0,TAU);ctx.fill();ctx.strokeStyle="#a63f8f";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(11,-58);ctx.lineTo(24,-65);ctx.moveTo(14,-67);ctx.lineTo(23,-56);ctx.stroke();
+    ctx.strokeStyle="#c9bfa0";ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(12,-66);ctx.lineTo(23,-63);ctx.moveTo(12,-61);ctx.lineTo(24,-58);ctx.stroke();
+    ctx.fillStyle="rgba(64,10,14,.55)";ctx.beginPath();ctx.ellipse(-12,-77,7,10,.4,0,TAU);ctx.ellipse(4,-52,5,6,-.3,0,TAU);ctx.fill();
 
     for(const side of[-1,1]){
       const clubArm=e.kind==="club"&&side===1,shoulderX=side*27,shoulderY=-83;
@@ -891,10 +967,14 @@
     ctx.save();ctx.translate(step*2.8,-1);ctx.rotate(step*.055+drag*.025);
     ctx.fillStyle=skin;ctx.beginPath();ctx.moveTo(-24,-124);ctx.quadraticCurveTo(-30,-106,-20,-91);ctx.quadraticCurveTo(0,-82,22,-93);ctx.quadraticCurveTo(30,-108,22,-125);ctx.quadraticCurveTo(0,-137,-24,-124);ctx.fill();
     ctx.fillStyle="#455e43";ctx.beginPath();ctx.arc(-23,-108,7,0,TAU);ctx.arc(22,-106,6,0,TAU);ctx.fill();
+    ctx.fillStyle="rgba(49,76,55,.55)";ctx.beginPath();ctx.ellipse(14,-121,6,4,.4,0,TAU);ctx.ellipse(-18,-96,5,3,-.3,0,TAU);ctx.fill();
     ctx.fillStyle="#362238";ctx.beginPath();ctx.ellipse(-17,-116,8,5,-.35,0,TAU);ctx.fill();ctx.strokeStyle="#7b3990";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-23,-119);ctx.lineTo(-11,-113);ctx.stroke();
-    ctx.fillStyle="#e5ff94";ctx.shadowColor="#b7ff6f";ctx.shadowBlur=e.boss?10:4;ctx.beginPath();ctx.ellipse(-9,-113,5,4,-.1,0,TAU);ctx.ellipse(11,-111,4,5,.2,0,TAU);ctx.fill();ctx.shadowBlur=0;ctx.fillStyle="#172019";ctx.beginPath();ctx.arc(-8,-113,2,0,TAU);ctx.arc(11,-111,2,0,TAU);ctx.fill();
+    ctx.fillStyle="rgba(18,30,22,.9)";ctx.beginPath();ctx.ellipse(-9,-113,8,6.5,-.1,0,TAU);ctx.ellipse(11,-111,7,6.5,.2,0,TAU);ctx.fill();
+    ctx.strokeStyle="#243a28";ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(-16,-119);ctx.lineTo(-3,-116);ctx.moveTo(4,-116);ctx.lineTo(17,-115);ctx.stroke();
+    ctx.fillStyle="#e5ff94";ctx.shadowColor="#b7ff6f";ctx.shadowBlur=e.boss?10:5;ctx.beginPath();ctx.ellipse(-9,-113,4.2,3.4,-.1,0,TAU);ctx.ellipse(11,-111,3.5,4.2,.2,0,TAU);ctx.fill();ctx.shadowBlur=0;ctx.fillStyle="#172019";ctx.beginPath();ctx.arc(-8,-113,1.8,0,TAU);ctx.arc(11,-111,1.8,0,TAU);ctx.fill();
     ctx.fillStyle="#28151f";ctx.beginPath();ctx.moveTo(-13,-99);ctx.quadraticCurveTo(1,-88,15,-99);ctx.lineTo(11,-87);ctx.lineTo(-8,-88);ctx.closePath();ctx.fill();ctx.fillStyle="#d6c4a4";for(let i=0;i<5;i++){const toothX=-10+i*5;ctx.beginPath();ctx.moveTo(toothX,-98);ctx.lineTo(toothX+3,-98);ctx.lineTo(toothX+1,-92-(i%3));ctx.fill()}
-    ctx.strokeStyle="#314c37";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(3,-126);ctx.lineTo(-2,-116);ctx.lineTo(5,-119);ctx.moveTo(17,-103);ctx.lineTo(8,-98);ctx.stroke();ctx.restore();
+    ctx.strokeStyle="#314c37";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(3,-126);ctx.lineTo(-2,-116);ctx.lineTo(5,-119);ctx.moveTo(17,-103);ctx.lineTo(8,-98);ctx.stroke();
+    ctx.strokeStyle="rgba(122,20,30,.8)";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-4,-90);ctx.lineTo(-5,-80);ctx.moveTo(7,-89);ctx.lineTo(8,-82);ctx.stroke();ctx.restore();
     if(e.boss){ctx.fillStyle="#24343a";for(const side of[-1,1]){ctx.beginPath();ctx.moveTo(side*23,-92);ctx.lineTo(side*49,-87);ctx.lineTo(side*31,-67);ctx.closePath();ctx.fill()}ctx.fillStyle=colors.orange;ctx.beginPath();ctx.moveTo(-4,-133);ctx.lineTo(0,-145);ctx.lineTo(5,-133);ctx.fill()}
     if (e.kind === "club") {
       ctx.save();ctx.translate(45,-55);ctx.rotate(-.55+attack*1.65);ctx.strokeStyle="#4a2a1b";ctx.lineWidth=8;ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(0,-74);ctx.stroke();ctx.fillStyle="#73513a";ctx.beginPath();ctx.roundRect(-13,-88,27,50,7);ctx.fill();ctx.fillStyle="#aa7a50";for(let i=0;i<3;i++){ctx.beginPath();ctx.moveTo(-12+i*12,-80);ctx.lineTo(-20+i*17,-90);ctx.lineTo(-7+i*12,-85);ctx.fill()}ctx.restore();
@@ -910,10 +990,12 @@
     drawJointedLimb(-10,-35,leftKneeX,-18,leftFootX,0,shadow,bone,10,5,5);
     drawJointedLimb(10,-35,rightKneeX,-18,rightFootX,0,shadow,bone,10,5,5);
     ctx.fillStyle=bone;ctx.beginPath();ctx.ellipse(leftFootX-3,0,11,4,-.06,0,TAU);ctx.ellipse(rightFootX+3,0,11,4,.06,0,TAU);ctx.fill();
+    ctx.strokeStyle="rgba(40,52,48,.35)";ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(leftKneeX,-16);ctx.lineTo(leftFootX,-3);ctx.moveTo(rightKneeX,-16);ctx.lineTo(rightFootX,-3);ctx.stroke();
     ctx.fillStyle=bone;ctx.beginPath();ctx.moveTo(-18,-39);ctx.quadraticCurveTo(-22,-28,-10,-24);ctx.lineTo(0,-29);ctx.lineTo(10,-24);ctx.quadraticCurveTo(22,-28,18,-39);ctx.quadraticCurveTo(0,-31,-18,-39);ctx.fill();ctx.fillStyle="#142027";ctx.beginPath();ctx.arc(0,-33,8,0,Math.PI);ctx.fill();
     ctx.strokeStyle=shadow;ctx.lineWidth=8;ctx.beginPath();ctx.moveTo(0,-76);ctx.lineTo(0,-32);ctx.stroke();ctx.strokeStyle=bone;ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(0,-78);ctx.lineTo(0,-31);ctx.stroke();
     for(let i=0;i<6;i++){const y=-73+i*6,w=23-i*1.5;ctx.strokeStyle=shadow;ctx.lineWidth=6;ctx.beginPath();ctx.moveTo(-w,y);ctx.quadraticCurveTo(0,y+15,w,y);ctx.stroke();ctx.strokeStyle=bone;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(-w,y);ctx.quadraticCurveTo(0,y+15,w,y);ctx.stroke()}
     ctx.strokeStyle=bone;ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(-24,-76);ctx.quadraticCurveTo(0,-84,24,-76);ctx.stroke();
+    ctx.strokeStyle="rgba(70,78,72,.6)";ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(-14,-66);ctx.lineTo(-4,-58);ctx.moveTo(8,-70);ctx.lineTo(15,-62);ctx.stroke();
     for(const side of[-1,1]){
       const swing=-side*step,shoulderX=side*24,shoulderY=-75;
       const elbowX=armed?side*(32+attack*4):side*(29+swing*5),elbowY=armed?-57:-53+Math.abs(swing)*2;
@@ -927,7 +1009,9 @@
     ctx.fillStyle=shadow;ctx.beginPath();ctx.ellipse(0,0,29,28,0,0,TAU);ctx.fill();ctx.fillStyle=bone;ctx.beginPath();ctx.moveTo(-24,-12);ctx.quadraticCurveTo(-27,11,-16,19);ctx.lineTo(-12,29);ctx.lineTo(14,27);ctx.lineTo(17,18);ctx.quadraticCurveTo(28,8,23,-13);ctx.quadraticCurveTo(0,-28,-24,-12);ctx.fill();
     ctx.fillStyle="#101a20";ctx.beginPath();ctx.ellipse(-10,-3,8,10,-.16,0,TAU);ctx.ellipse(10,-2,8,10,.16,0,TAU);ctx.fill();ctx.beginPath();ctx.moveTo(-5,10);ctx.lineTo(0,2);ctx.lineTo(6,10);ctx.fill();
     if(e.boss){ctx.fillStyle=colors.orange;ctx.shadowColor=colors.orange;ctx.shadowBlur=11;ctx.beginPath();ctx.arc(-10,-3,3,0,TAU);ctx.arc(10,-2,3,0,TAU);ctx.fill();ctx.shadowBlur=0}
+    else{ctx.fillStyle="#9fffd8";ctx.shadowColor="#6dffb2";ctx.shadowBlur=6;ctx.beginPath();ctx.arc(-10,-3,2.2,0,TAU);ctx.arc(10,-2,2.2,0,TAU);ctx.fill();ctx.shadowBlur=0}
     ctx.fillStyle="#b8b8a7";ctx.beginPath();ctx.moveTo(-16,18);ctx.quadraticCurveTo(0,32,17,18);ctx.lineTo(14,29);ctx.quadraticCurveTo(0,36,-13,28);ctx.closePath();ctx.fill();ctx.strokeStyle="#5f6662";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-15,20);ctx.lineTo(15,20);for(let i=0;i<5;i++){ctx.moveTo(-11+i*6,20);ctx.lineTo(-10+i*6,28)}ctx.stroke();
+    ctx.fillStyle="#1a2429";ctx.fillRect(-9+(((e.id*7)|0)%3)*6,21,5,6);
     ctx.strokeStyle="#68706b";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(6,-20);ctx.lineTo(-1,-7);ctx.lineTo(8,-10);ctx.moveTo(-20,8);ctx.lineTo(-12,12);ctx.stroke();ctx.fillStyle="#315246";ctx.beginPath();ctx.ellipse(19,8,5,3,.4,0,TAU);ctx.fill();ctx.restore();ctx.restore();
   }
 
@@ -936,18 +1020,28 @@
   }
 
   function drawQuestion(q) {
-    const centerX=width/2, baseY=Math.min(height*.49,330), spacing=Math.min(145,width*.25), bob=Math.sin(q.age*3)*6;
-    q.balloons=[];
-    ctx.save();ctx.textAlign="center";
-    ctx.fillStyle="rgba(5,25,31,.9)";ctx.strokeStyle="rgba(109,255,178,.65)";ctx.lineWidth=2;roundRect(centerX-86,baseY+82,172,72,8,true,true);
-    ctx.fillStyle="#87aaa0";ctx.font="700 9px DM Sans";ctx.letterSpacing="2px";ctx.fillText("SOLVE TO UNLOCK",centerX,baseY+105);ctx.fillStyle="#f1fff8";ctx.font="800 34px Barlow Condensed";ctx.fillText(`${q.a} ${q.op} ${q.b} = ?`,centerX,baseY+140);
-    for(let i=0;i<3;i++){
-      const x=centerX+(i-1)*spacing,y=baseY+bob+Math.sin(q.age*4+i)*5,r=Math.min(48,width*.085);q.balloons.push({x,y,r,value:q.answers[i]});
-      ctx.strokeStyle="rgba(232,255,245,.5)";ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,y+r);ctx.quadraticCurveTo(x+14,baseY+75,x,baseY+82);ctx.stroke();
-      const g=ctx.createRadialGradient(x-r*.25,y-r*.35,3,x,y,r);g.addColorStop(0,i===1?"#9affcf":"#ffab86");g.addColorStop(1,i===1?"#15986b":"#b7432d");ctx.fillStyle=g;ctx.beginPath();ctx.ellipse(x,y,r*.8,r,0,0,TAU);ctx.fill();ctx.beginPath();ctx.moveTo(x-6,y+r*.85);ctx.lineTo(x,y+r+9);ctx.lineTo(x+6,y+r*.85);ctx.fill();
-      ctx.fillStyle="#071b24";ctx.font=`900 ${Math.max(20,r*.62)}px Barlow Condensed`;ctx.fillText(q.answers[i],x,y+8);
+    // Supply question lives on the right shoulder of the road so it never overlaps the enemy lanes.
+    const r = Math.min(44, width * .07, height * .062), sideX = width - Math.max(r * 1.6, 96) - 14, baseY = Math.max(height * .3, 188);
+    const spacing = r * 2.3 + 10, bob = Math.sin(q.age * 3) * 5;
+    q.balloons = [];
+    ctx.save(); ctx.textAlign = "center";
+    ctx.fillStyle = "rgba(5,25,31,.9)"; ctx.strokeStyle = "rgba(109,255,178,.65)"; ctx.lineWidth = 2; roundRect(sideX - 86, baseY - 84, 172, 64, 8, true, true);
+    ctx.fillStyle = "#87aaa0"; ctx.font = "700 9px DM Sans"; ctx.letterSpacing = "2px"; ctx.fillText("SOLVE TO UNLOCK", sideX, baseY - 62);
+    ctx.fillStyle = "#f1fff8"; ctx.font = "800 32px Barlow Condensed"; ctx.fillText(`${q.a} ${q.op} ${q.b} = ?`, sideX, baseY - 32);
+    const remain = Math.max(0, q.life - q.age) / q.life;
+    ctx.fillStyle = "rgba(255,255,255,.12)"; ctx.fillRect(sideX - 86, baseY - 26, 172, 3);
+    ctx.fillStyle = remain < .3 ? colors.orange : colors.mint; ctx.fillRect(sideX - 86, baseY - 26, 172 * remain, 3);
+    for (let i = 0; i < 3; i++) {
+      const y = baseY + r + 6 + i * spacing + bob + Math.sin(q.age * 4 + i) * 4, x = sideX + Math.sin(q.age * 2.2 + i * 2.1) * 7;
+      q.balloons.push({ x, y, r, value: q.answers[i] });
+      ctx.strokeStyle = "rgba(232,255,245,.5)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, y - r); ctx.quadraticCurveTo(sideX + 12, y - r - spacing * .45, sideX, i ? y - spacing + r : baseY - 20); ctx.stroke();
+      const g = ctx.createRadialGradient(x - r * .25, y - r * .35, 3, x, y, r); g.addColorStop(0, i === 1 ? "#9affcf" : "#ffab86"); g.addColorStop(1, i === 1 ? "#15986b" : "#b7432d"); ctx.fillStyle = g;
+      ctx.beginPath(); ctx.ellipse(x, y, r * .8, r, 0, 0, TAU); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(x - 6, y + r * .85); ctx.lineTo(x, y + r + 9); ctx.lineTo(x + 6, y + r * .85); ctx.fill();
+      ctx.fillStyle = "#071b24"; ctx.font = `900 ${Math.max(20, r * .62)}px Barlow Condensed`; ctx.fillText(q.answers[i], x, y + 8);
     }
-    const remain=Math.max(0,q.life-q.age)/q.life;ctx.fillStyle="rgba(255,255,255,.12)";ctx.fillRect(centerX-86,baseY+152,172,3);ctx.fillStyle=remain<.3?colors.orange:colors.mint;ctx.fillRect(centerX-86,baseY+152,172*remain,3);ctx.restore();
+    ctx.restore();
   }
 
   function drawSkyBomb() {
@@ -975,7 +1069,7 @@
     const x = width / 2 + Math.max(-42, Math.min(42, (state.aimX - width / 2) * .075));
     const y = height - 14, shoulderX = x + 13 * scale, shoulderY = y - 111 * scale;
     const angle = Math.atan2(state.aimY - shoulderY, state.aimX - shoulderX);
-    const length = ({Sidearm: 58, "Machine Gun": 88, Flamethrower: 82, Bazooka: 105})[state.weapon] * scale;
+    const length = ({Sidearm: 58, "Machine Gun": 88, Flamethrower: 82, Shotgun: 84, Bazooka: 105})[state.weapon] * scale;
     return { scale, x, y, shoulderX, shoulderY, angle, length };
   }
 
@@ -1007,9 +1101,6 @@
     ctx.fillStyle = "#b98164"; ctx.beginPath(); ctx.arc(0, -148, 28, 0, TAU); ctx.fill();
     ctx.fillStyle = "#10191e"; ctx.beginPath(); ctx.arc(0, -154, 31, Math.PI, TAU); ctx.lineTo(25, -140); ctx.lineTo(14, -145); ctx.lineTo(5, -136); ctx.lineTo(-5, -146); ctx.lineTo(-19, -137); ctx.lineTo(-27, -145); ctx.closePath(); ctx.fill();
     ctx.fillStyle = colors.mint; ctx.fillRect(-30, -159, 60, 6); ctx.fillStyle = "#1f3740"; ctx.beginPath(); ctx.roundRect(-28, -141, 56, 18, 6); ctx.fill();
-    ctx.strokeStyle = "#1a2e36"; ctx.lineWidth = 14; ctx.beginPath(); ctx.moveTo(-29, -108); ctx.lineTo(-48, -79); ctx.stroke();
-    ctx.fillStyle = "#34535d"; ctx.beginPath(); ctx.roundRect(-54, -87, 18, 26, 6); ctx.fill(); ctx.fillStyle = colors.mint; ctx.fillRect(-53, -74, 16, 3);
-    ctx.fillStyle = "#23404a"; ctx.beginPath(); ctx.moveTo(29, -119); ctx.lineTo(55, -110); ctx.lineTo(34, -96); ctx.fill();
   }
 
   function drawSan(stride, aimAngle) {
@@ -1023,19 +1114,30 @@
     ctx.fillStyle = "#b47d62"; ctx.beginPath(); ctx.arc(0, -151, 29, 0, TAU); ctx.fill();
     ctx.fillStyle = "#11191d"; ctx.beginPath(); ctx.arc(0, -157, 31, Math.PI, TAU); ctx.lineTo(27, -145); ctx.lineTo(-26, -145); ctx.closePath(); ctx.fill();
     ctx.beginPath(); ctx.arc(0, -184, 13, 0, TAU); ctx.fill(); ctx.fillRect(-7, -180, 14, 15);
-    ctx.strokeStyle = "#0a1013"; ctx.lineWidth = 16; ctx.beginPath(); ctx.moveTo(-37, -109); ctx.lineTo(-54, -77); ctx.stroke();
-    ctx.fillStyle = "#080c0e"; ctx.beginPath(); ctx.roundRect(-61, -86, 21, 28, 6); ctx.fill();
     ctx.fillStyle = colors.orange; ctx.fillRect(35, -111, 5, 33);
   }
 
   function drawPlayerWeapon(angle) {
+    // Weapon pivots in front of the chest; both arms reach from the shoulders to hands gripping it.
+    const isSan = state.character === "san";
+    const sleeve = isSan ? "#0a1013" : "#1a2e36", glove = isSan ? "#11181c" : "#34535d";
+    const cosA = Math.cos(angle), sinA = Math.sin(angle);
+    const grip1 = { x: 13 + cosA * 15, y: -111 + sinA * 15 }, grip2 = { x: 13 + cosA * 42, y: -111 + sinA * 42 };
+    ctx.lineCap = "round";
+    ctx.strokeStyle = sleeve; ctx.lineWidth = 13;
+    ctx.beginPath(); ctx.moveTo(-25, -99); ctx.lineTo(grip1.x, grip1.y); ctx.stroke();
+    ctx.lineWidth = 12; ctx.beginPath(); ctx.moveTo(25, -99); ctx.lineTo(grip2.x, grip2.y); ctx.stroke();
     ctx.save(); ctx.translate(13, -111); ctx.rotate(angle);
-    ctx.strokeStyle = state.character === "augusto" ? "#1a3038" : "#090f12"; ctx.lineWidth = 15;
-    ctx.beginPath(); ctx.moveTo(-5, 0); ctx.lineTo(32, 1); ctx.stroke();
+    ctx.fillStyle = "#131d22"; ctx.beginPath(); ctx.roundRect(4, -6, 20, 13, 3); ctx.fill();
     if (state.weapon === "Bazooka") {
       ctx.fillStyle = "#526a5e"; ctx.beginPath(); ctx.roundRect(19, -11, 91, 22, 8); ctx.fill(); ctx.fillStyle = colors.orange; ctx.fillRect(84, -12, 10, 24); ctx.fillStyle = "#17282a"; ctx.fillRect(28, 8, 18, 24);
     } else if (state.weapon === "Flamethrower") {
       ctx.fillStyle = "#3a5053"; ctx.beginPath(); ctx.roundRect(21, -10, 67, 20, 7); ctx.fill(); ctx.fillStyle = "#70898a"; ctx.fillRect(72, -7, 24, 14); ctx.fillStyle = colors.orange; ctx.fillRect(91, -5, 13, 10); ctx.fillStyle = "#17282b"; ctx.fillRect(31, 8, 16, 23);
+    } else if (state.weapon === "Shotgun") {
+      ctx.fillStyle = "#43331f"; ctx.beginPath(); ctx.roundRect(6, -7, 24, 15, 5); ctx.fill();
+      ctx.fillStyle = "#2c3b41"; ctx.beginPath(); ctx.roundRect(26, -8, 60, 9, 3); ctx.fill(); ctx.beginPath(); ctx.roundRect(26, 0, 60, 8, 3); ctx.fill();
+      ctx.fillStyle = "#5a4526"; ctx.beginPath(); ctx.roundRect(36, 2, 22, 11, 4); ctx.fill();
+      ctx.fillStyle = colors.orange; ctx.fillRect(80, -7, 5, 14);
     } else {
       const machine = state.weapon === "Machine Gun", length = machine ? 83 : 54;
       ctx.fillStyle = "#31474d"; ctx.beginPath(); ctx.roundRect(21, -7, length, 15, 5); ctx.fill(); ctx.fillStyle = colors.mint; ctx.fillRect(24, 5, length - 7, 3);
@@ -1043,6 +1145,9 @@
       if (machine) { ctx.fillStyle = "#152329"; ctx.fillRect(52, 8, 17, 28); ctx.fillStyle = "#657c7d"; ctx.fillRect(72, -5, 19, 5); }
     }
     ctx.restore();
+    ctx.fillStyle = glove;
+    ctx.beginPath(); ctx.arc(grip1.x, grip1.y, 7.5, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(grip2.x, grip2.y, 7, 0, TAU); ctx.fill();
   }
 
   function loop(time) {
