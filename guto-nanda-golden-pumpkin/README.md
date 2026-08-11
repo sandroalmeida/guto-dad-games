@@ -6,7 +6,8 @@ Golden Pumpkin.
 
 ## Current build
 
-- Course 1, **The Crocodile Canal**, is playable end to end.
+- Courses 1 and 2 are playable end to end: **The Crocodile Canal** and
+  **The Pushing Monkeys**.
 - Choose Guto or Nanda as the active explorer; their partner cheers from shore.
 - Run, jump, catch any part of a swinging vine, climb it, and reach the far bank.
 - Animated crocodiles, water, procedural jungle scenery, sound cues, game-over,
@@ -15,6 +16,9 @@ Golden Pumpkin.
   crocodile gaze and jaws, natural pendulum timing, flexible vine rendering,
   layered jungle depth, mist, water reflections, and environmental effects.
 - The full eight-course expedition is mapped beneath the game.
+- Course 2 adds four three-layer trees, seven patrolling capuchins, directional
+  shoves, branch-jumping pursuit, stomp-to-dizzy combat, two route-blocking
+  barriers, and a cumulative one-second spike damage meter.
 
 ## Controls
 
@@ -27,6 +31,12 @@ Golden Pumpkin.
 Falling into the canal ends the attempt. Reach the trail sign on the far bank
 to complete the course. Every vine catch requires a jump first; dropping by
 releasing `Z` does not allow another catch until the explorer lands and jumps.
+
+In Course 2, use the same movement, jump, and run controls. Monkeys chase on
+their branch layer and push the explorer downward on contact. Land on a monkey's
+head to stun it. Every spike landing adds damage to the same one-second meter;
+jumping clear pauses the damage but does not reset it. The barriers at both ends
+of the spike bed can only be cleared from the tree branches.
 
 ## Run locally
 
