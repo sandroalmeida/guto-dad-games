@@ -31,6 +31,10 @@ test("renders the Golden Pumpkin game shell", async () => {
   const html = await response.text();
   assert.match(html, /<title>Guto &amp; Nanda and the Golden Pumpkin<\/title>/i);
   assert.match(html, /The Crocodile Canal/);
+  assert.match(html, /The Pushing Monkeys/);
+  assert.match(html, /reaches one second/i);
+  assert.match(html, /two barriers/i);
+  assert.match(html, /Capuchin Monkeys/i);
   assert.match(html, /Eight guardians\. One golden prize\./);
   assert.match(html, /ENTER THE JUNGLE/);
   assert.match(html, /\/og\.png/);
@@ -59,4 +63,41 @@ test("keeps the crocodile canvas transform balanced", async () => {
 
   const crocodiles = source.match(/drawCrocodile\(ctx,/g)?.length ?? 0;
   assert.equal(crocodiles, 3, "the canal should render all three crocodiles");
+});
+
+test("builds the four-tree Pushing Monkeys challenge", async () => {
+  const source = await readFile(
+    new URL("../app/page.tsx", import.meta.url),
+    "utf8",
+  );
+  const treesStart = source.indexOf("const treeDefinitions = [");
+  const treesEnd = source.indexOf("] as const;", treesStart);
+  const trees = source.slice(treesStart, treesEnd).match(/\{ x:/g)?.length ?? 0;
+  assert.equal(trees, 4, "course two should contain four tall trees");
+
+  const platformsStart = source.indexOf("const monkeyPlatforms:");
+  const platformsEnd = source.indexOf("];", platformsStart);
+  const platforms = source
+    .slice(platformsStart, platformsEnd)
+    .match(/tree: \d, level: \d/g)?.length ?? 0;
+  assert.equal(platforms, 12, "each tree should contain three branch layers");
+  assert.match(source, /const MONKEY_SPIKE_LIMIT = 1;/);
+  assert.match(source, /monkey\.dizzyTimer = 3\.4;/);
+  assert.match(source, /SPIKES!.*to jump clear/);
+  assert.match(source, /playerPlatform\.tree === platform\.tree/);
+  assert.match(source, /monkey\.targetPlatformIndex = nextPlatformIndex/);
+  assert.match(source, /Math\.sign\(distance \|\| player\.facing\) \* 150/);
+  assert.match(source, /monkey\.pushCooldown > 0\.48/);
+
+  const barriersStart = source.indexOf("const monkeyBarriers = [");
+  const barriersEnd = source.indexOf("] as const;", barriersStart);
+  const barriers = source
+    .slice(barriersStart, barriersEnd)
+    .match(/\{ x: \d+, width: \d+, top: \d+, label:/g)?.length ?? 0;
+  assert.equal(barriers, 2, "the spike bed should have two route barriers");
+  assert.doesNotMatch(
+    source,
+    /game\.spikeTimer = 0/,
+    "jumping clear must not reset cumulative spike damage",
+  );
 });
