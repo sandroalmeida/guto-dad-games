@@ -280,6 +280,10 @@ button {
   background: var(--orange);
 }
 
+.progress-dots i.complete {
+  background: #4f8d61;
+}
+
 .header-actions {
   justify-self: end;
   display: flex;
@@ -345,6 +349,33 @@ button {
 .game-intro h1 {
   font-size: clamp(42px, 5vw, 70px);
   line-height: 0.92;
+}
+
+.course-switcher {
+  display: flex;
+  gap: 7px;
+  margin-bottom: 18px;
+}
+
+.course-switcher button {
+  min-height: 30px;
+  padding: 0 12px;
+  color: #677168;
+  background: rgba(255, 250, 236, 0.48);
+  border: 1px solid rgba(35, 67, 51, 0.18);
+  border-radius: 99px;
+  cursor: pointer;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.course-switcher button.selected {
+  color: #fff4d8;
+  background: var(--deep);
+  border-color: var(--deep);
+  box-shadow: 0 3px 0 rgba(213, 115, 49, 0.5);
 }
 
 .intro-copy {
@@ -882,12 +913,26 @@ kbd {
   border-bottom: 1px solid var(--line);
   position: relative;
   transition: background 180ms ease, transform 180ms ease;
+  color: var(--ink);
+  border-top: 0;
+  border-left: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .course-card:hover {
   background: rgba(255, 249, 231, 0.72);
   transform: translateY(-3px);
   z-index: 1;
+}
+
+.course-card:disabled {
+  cursor: default;
+}
+
+.course-card:disabled:hover {
+  transform: none;
 }
 
 .course-card.current {
