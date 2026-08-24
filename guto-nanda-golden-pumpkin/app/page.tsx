@@ -1,10 +1,65 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  EAGLE_GROUND_Y,
+  EAGLE_HOLD_LIMIT,
+  EAGLE_MAX_HEALTH,
+  EAGLE_SAFE_LEFT,
+  EAGLE_SAFE_RIGHT,
+  makeEagleCourse,
+  stepEagleCourse,
+  threateningEagle,
+  type Eagle,
+  type EagleCourseState,
+  type EagleEvent,
+  type EagleLossReason,
+} from "./eagle-course";
+import {
+  HIPPO_BACK_LIMIT,
+  HIPPO_BANK_LEFT,
+  HIPPO_BANK_RIGHT,
+  HIPPO_BANK_Y,
+  HIPPO_LENGTH,
+  HIPPO_MAX_CHARGE,
+  HIPPO_OVERCHARGE_START,
+  HIPPO_PLAYER_START_X,
+  HIPPO_SPLASH_Y,
+  HIPPO_WATER_Y,
+  makeHippoCourse,
+  stepHippoCourse,
+  zoneLimit,
+  zoneSpan,
+  type Hippo,
+  type HippoCourseState,
+  type HippoEvent,
+  type HippoLossReason,
+  type HippoZone,
+} from "./hippo-course";
+import {
+  SNAKE_BITE_DELAY,
+  SNAKE_CELL_H,
+  SNAKE_CELL_W,
+  SNAKE_COLS,
+  SNAKE_GRID_X,
+  SNAKE_GRID_Y,
+  SNAKE_LANES,
+  bandAt,
+  cellCenter,
+  makeSnakeCourse,
+  playerPosition,
+  snakeHead,
+  stepSnakeCourse,
+  type SnakeBand,
+  type SnakeCourseState,
+  type SnakeEvent,
+  type SnakeLossReason,
+  type SnakeMove,
+} from "./snake-course";
 
 type Character = "guto" | "nanda";
 type Overlay = "briefing" | "gameover" | "won" | null;
-type CourseNumber = 1 | 2;
+type CourseNumber = 1 | 2 | 3 | 4 | 5;
 
 type Vine = {
   x: number;
@@ -57,6 +112,11 @@ type GameState = {
   monkeys: Monkey[];
   spikeTimer: number;
   spikeActive: boolean;
+  eagle: EagleCourseState;
+  hippo: HippoCourseState;
+  snake: SnakeCourseState;
+  notice: string;
+  noticeTimer: number;
   running: boolean;
   elapsed: number;
   lastTime: number;
@@ -137,30 +197,30 @@ const courses = [
   },
   {
     number: "03",
-    animal: "Jaguar",
-    title: "The Jaguar’s Gaze",
-    skill: "Hide & listen",
-    icon: "🐆",
-    status: "PLANNED",
-    description: "Move between giant ferns only when the jungle hunter looks away.",
+    animal: "Hawk-Eagles",
+    title: "The Diving Eagles",
+    skill: "Shield & shake",
+    icon: "🦅",
+    status: "PLAYABLE",
+    description: "Raise a rodent overhead to feed each diving eagle, and mash free if the talons close on you.",
   },
   {
     number: "04",
-    animal: "Anaconda",
-    title: "Coils in the Ruins",
-    skill: "Sneak & sprint",
-    icon: "🐍",
-    status: "PLANNED",
-    description: "Read the sleeping snake’s rhythm, then dash across the warm stones.",
+    animal: "Hippos",
+    title: "The Hippo Crossing",
+    skill: "Hop & time",
+    icon: "🦛",
+    status: "PLAYABLE",
+    description: "Hop mouth-to-head-to-back across four restless hippos, or charge a long jump straight to the next back.",
   },
   {
     number: "05",
-    animal: "Spider",
-    title: "The Silver Web",
-    skill: "Bounce & cut",
-    icon: "🕷️",
-    status: "PLANNED",
-    description: "Use springy webs as trampolines and snip the right silk gates.",
+    animal: "Vipers",
+    title: "The Sleeping Snakes",
+    skill: "Memorize & hop",
+    icon: "🐍",
+    status: "PLAYABLE",
+    description: "Seen from above, roots and sleeping snakes look alike. Wake them on purpose, hop back, and remember the way.",
   },
   {
     number: "06",
@@ -191,7 +251,11 @@ const courses = [
   },
 ];
 
-function makeGame(course: CourseNumber = 1): GameState {
+function byCourse<T>(course: CourseNumber, one: T, two: T, three: T, four: T, five: T): T {
+  return course === 1 ? one : course === 2 ? two : course === 3 ? three : course === 4 ? four : five;
+}
+
+function makeGame(course: CourseNumber = 1, snakeSeed = 5): GameState {
   const monkeys = monkeyStarts.map((start) => {
     const platform = monkeyPlatforms[start.platformIndex];
     return {
@@ -210,8 +274,8 @@ function makeGame(course: CourseNumber = 1): GameState {
   return {
     course,
     player: {
-      x: 125,
-      y: course === 1 ? GROUND_Y : MONKEY_GROUND_Y,
+      x: course === 3 ? 105 : course === 4 ? HIPPO_PLAYER_START_X : 125,
+      y: byCourse(course, GROUND_Y, MONKEY_GROUND_Y, EAGLE_GROUND_Y, HIPPO_BANK_Y, SNAKE_GRID_Y + SNAKE_CELL_H * 2.5),
       vx: 0,
       vy: 0,
       facing: 1,
@@ -227,6 +291,11 @@ function makeGame(course: CourseNumber = 1): GameState {
     monkeys,
     spikeTimer: 0,
     spikeActive: false,
+    eagle: makeEagleCourse(Math.floor(Math.random() * 1e9)),
+    hippo: makeHippoCourse(Math.floor(Math.random() * 1e9)),
+    snake: course === 5 ? makeSnakeCourse(snakeSeed) : makeSnakeCourse(1),
+    notice: "",
+    noticeTimer: 0,
     running: false,
     elapsed: 0,
     lastTime: 0,
@@ -346,7 +415,9 @@ type CharacterMotion =
   | "fall"
   | "hang"
   | "climb"
-  | "wave";
+  | "wave"
+  | "carry"
+  | "lift";
 
 function drawCharacter(
   ctx: CanvasRenderingContext2D,
@@ -361,14 +432,15 @@ function drawCharacter(
   climbMotion = 0,
 ) {
   const isGuto = character === "guto";
-  const running = motion === "run";
+  const holding = motion === "carry" || motion === "lift";
+  const running = motion === "run" || (holding && Math.abs(speed) > 24);
   const hanging = motion === "hang" || motion === "climb";
   const cycle =
     elapsed *
     (running ? 7.2 + Math.min(Math.abs(speed), 320) * 0.018 : motion === "climb" ? 6 : 2.2);
   const bob = running
     ? Math.abs(Math.sin(cycle)) * 2.4
-    : motion === "idle" || motion === "wave"
+    : motion === "idle" || motion === "wave" || holding
       ? Math.sin(elapsed * 2.1) * 0.9
       : 0;
   const lean = running
@@ -393,7 +465,7 @@ function drawCharacter(
   ctx.translate(x, feetY);
   ctx.scale(facing * scale, scale);
 
-  if (motion === "idle" || motion === "run" || motion === "wave") {
+  if (motion === "idle" || motion === "run" || motion === "wave" || holding) {
     ctx.fillStyle = "rgba(5,27,24,.23)";
     ctx.beginPath();
     ctx.ellipse(0, 2, running ? 23 : 18, running ? 5 : 4, 0, 0, Math.PI * 2);
@@ -559,6 +631,15 @@ function drawCharacter(
 
   const armPose = (side: number) => {
     const phase = cycle + (side > 0 ? Math.PI : 0);
+    if (motion === "lift") {
+      const strain = Math.sin(elapsed * 5 + side) * 1.2;
+      return { elbowX: side * 13, elbowY: -66, handX: side * 7, handY: -88 + strain };
+    }
+    if (motion === "carry") {
+      return side < 0
+        ? { elbowX: 3, elbowY: -41, handX: 13, handY: -33 }
+        : { elbowX: 17, elbowY: -43, handX: 18, handY: -38 };
+    }
     if (hanging) {
       const climbingOffset = motion === "climb" ? Math.sin(cycle + side) * 7 * Math.sign(climbMotion || 1) : 0;
       return {
@@ -652,7 +733,8 @@ function drawCharacter(
   }
   ctx.fill();
 
-  const gazeY = hanging || motion === "jump" ? -1.2 : motion === "fall" ? 1.2 : 0;
+  const gazeY =
+    hanging || motion === "jump" || motion === "lift" ? -1.2 : motion === "fall" ? 1.2 : 0;
   ctx.fillStyle = "#fff9e8";
   ctx.beginPath();
   ctx.ellipse(7.5, -70, 4.2, 3.6, -0.05, 0, Math.PI * 2);
@@ -1815,6 +1897,1927 @@ function drawMonkeyWorld(
   }
 }
 
+function drawRodent(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  facing: number,
+  elapsed: number,
+  phase: number,
+  size: number,
+  moving: boolean,
+  wriggle = 0,
+  grounded = true,
+) {
+  const scurry = moving ? Math.sin(elapsed * 22 + phase) : 0;
+  const squirm = wriggle ? Math.sin(elapsed * 9 + phase) * wriggle : 0;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(facing * size, size);
+  ctx.rotate(squirm * 0.12);
+  ctx.lineCap = "round";
+  if (grounded) {
+    ctx.fillStyle = "rgba(25,40,18,.22)";
+    ctx.beginPath();
+    ctx.ellipse(1, 1, 15, 3.6, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.strokeStyle = "#c98a86";
+  ctx.lineWidth = 2.3;
+  ctx.beginPath();
+  ctx.moveTo(-12, -4);
+  ctx.quadraticCurveTo(-24, -5 + scurry * 2, -28, -15 - squirm * 4);
+  ctx.stroke();
+  ctx.strokeStyle = "#6e4c33";
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.moveTo(-6, -4);
+  ctx.lineTo(-9 + scurry * 3, 0);
+  ctx.moveTo(5, -4);
+  ctx.lineTo(8 - scurry * 3, 0);
+  ctx.stroke();
+  ctx.fillStyle = "#8c6a4b";
+  ctx.beginPath();
+  ctx.ellipse(0, -7, 13, 7.2, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#bd9a74";
+  ctx.beginPath();
+  ctx.ellipse(1, -4.5, 9, 3.6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#8c6a4b";
+  ctx.beginPath();
+  ctx.arc(11, -9, 5.6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#a07a5c";
+  ctx.beginPath();
+  ctx.arc(9, -14.5, 3.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#d8a4a0";
+  ctx.beginPath();
+  ctx.arc(9, -14.5, 1.6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#1e1410";
+  ctx.beginPath();
+  ctx.arc(13, -10, 1.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#d98b8b";
+  ctx.beginPath();
+  ctx.arc(16.6, -8, 1.4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(40,30,20,.55)";
+  ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  ctx.moveTo(15, -8);
+  ctx.lineTo(22, -10.5);
+  ctx.moveTo(15, -7);
+  ctx.lineTo(22, -5.5);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawFruit(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  kind: number,
+  scale = 1,
+  grounded = true,
+) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+  if (grounded) {
+    ctx.fillStyle = "rgba(25,40,18,.22)";
+    ctx.beginPath();
+    ctx.ellipse(0, 1, 12, 3.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  if (kind === 0) {
+    const mango = ctx.createRadialGradient(-3, -13, 2, 0, -10, 14);
+    mango.addColorStop(0, "#ffd45a");
+    mango.addColorStop(0.55, "#f39a2e");
+    mango.addColorStop(1, "#cf5a2a");
+    ctx.fillStyle = mango;
+    ctx.beginPath();
+    ctx.ellipse(0, -10, 12, 9, -0.55, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(90,40,10,.4)";
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    drawLeaf(ctx, 3, -19, 12, -0.9, "#4f8f4d");
+  } else if (kind === 1) {
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "#8a6a22";
+    ctx.lineWidth = 9;
+    ctx.beginPath();
+    ctx.moveTo(-13, -6);
+    ctx.quadraticCurveTo(0, -20, 13, -7);
+    ctx.stroke();
+    ctx.strokeStyle = "#f4d24b";
+    ctx.lineWidth = 6.5;
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(255,255,255,.35)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(-9, -8);
+    ctx.quadraticCurveTo(0, -16, 9, -9);
+    ctx.stroke();
+    ctx.fillStyle = "#5a4218";
+    ctx.beginPath();
+    ctx.arc(-13.5, -5.5, 2, 0, Math.PI * 2);
+    ctx.arc(13.5, -6.5, 2, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    const guava = ctx.createRadialGradient(-3, -13, 2, 0, -10, 12);
+    guava.addColorStop(0, "#c9e37a");
+    guava.addColorStop(0.6, "#7fbf4d");
+    guava.addColorStop(1, "#4d8a35");
+    ctx.fillStyle = guava;
+    ctx.beginPath();
+    ctx.arc(0, -10, 10, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(30,70,20,.4)";
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    ctx.fillStyle = "#3f6f2a";
+    ctx.beginPath();
+    ctx.arc(0, -20, 1.8, 0, Math.PI * 2);
+    ctx.fill();
+    drawLeaf(ctx, 1, -20, 11, 0.4, "#5a9a4a");
+  }
+  ctx.restore();
+}
+
+const eaglePalettes = [
+  { body: "#3b2718", wing: "#4a3220", wingFar: "#2c1d12", feather: "#7a5a3b", chest: "#efe2c4", crest: "#2b1a10", band: "#8f7554" },
+  { body: "#5a3319", wing: "#6b3f21", wingFar: "#3f2513", feather: "#9a6a3d", chest: "#f1e5cf", crest: "#3e2313", band: "#b08858" },
+  { body: "#26201b", wing: "#332a23", wingFar: "#171310", feather: "#5c4d3f", chest: "#e5d7bd", crest: "#141010", band: "#7d6d5b" },
+] as const;
+
+function drawEagleWing(
+  ctx: CanvasRenderingContext2D,
+  palette: (typeof eaglePalettes)[number],
+  angle: number,
+  far: boolean,
+) {
+  ctx.save();
+  ctx.translate(-2, -6);
+  ctx.rotate(angle);
+  ctx.fillStyle = far ? palette.wingFar : palette.wing;
+  ctx.beginPath();
+  ctx.moveTo(4, 2);
+  ctx.bezierCurveTo(-16, -14, -54, -22, -86, -16);
+  ctx.lineTo(-96, -9);
+  ctx.lineTo(-84, -4);
+  ctx.lineTo(-92, 5);
+  ctx.lineTo(-77, 5);
+  ctx.lineTo(-82, 14);
+  ctx.lineTo(-64, 12);
+  ctx.bezierCurveTo(-42, 17, -18, 13, 6, 8);
+  ctx.closePath();
+  ctx.fill();
+  if (!far) {
+    ctx.strokeStyle = palette.feather;
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    for (let feather = 0; feather < 4; feather += 1) {
+      ctx.moveTo(-14 - feather * 16, -2 + feather * 1.5);
+      ctx.lineTo(-30 - feather * 16, 9 + feather * 0.5);
+    }
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(0,0,0,.25)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(2, 0);
+    ctx.bezierCurveTo(-16, -12, -54, -20, -86, -15);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawEagle(ctx: CanvasRenderingContext2D, eagle: Eagle, elapsed: number) {
+  const palette = eaglePalettes[eagle.tint];
+  const diving = eagle.mode === "dive";
+  const hovering = eagle.mode === "lock";
+  const carrying = eagle.mode === "carryPrey" || eagle.mode === "carryPlayer";
+  const climbing = eagle.mode === "retreat";
+  const flapRate = hovering ? 9 : carrying ? 7.5 : climbing ? 6 : 2.4;
+  const flapAmp = hovering ? 0.8 : carrying ? 0.7 : climbing ? 0.6 : 0.24;
+  const flap = diving
+    ? -0.9 + Math.sin(elapsed * 6 + eagle.phase) * 0.04
+    : Math.sin(elapsed * flapRate + eagle.phase) * flapAmp -
+      (eagle.mode === "circle" ? 0.12 : 0.05);
+  const tilt = diving
+    ? Math.max(-0.2, Math.min(0.85, Math.atan2(eagle.vy, Math.abs(eagle.vx) + 40) * 0.6))
+    : carrying
+      ? -0.14
+      : Math.max(-0.22, Math.min(0.22, eagle.vy / 900));
+  const legsOut = diving || hovering || carrying;
+
+  ctx.save();
+  ctx.translate(eagle.x, eagle.y);
+  ctx.scale(eagle.facing * eagle.scale, eagle.scale);
+  ctx.rotate(tilt);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  drawEagleWing(ctx, palette, flap * 0.85 + 0.18, true);
+
+  ctx.fillStyle = palette.wing;
+  ctx.beginPath();
+  ctx.moveTo(-22, -6);
+  ctx.lineTo(-54, -11);
+  ctx.lineTo(-58, 0);
+  ctx.lineTo(-53, 10);
+  ctx.lineTo(-22, 7);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = palette.band;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-40, -8);
+  ctx.lineTo(-42, 8);
+  ctx.moveTo(-50, -10);
+  ctx.lineTo(-52, 9);
+  ctx.stroke();
+
+  const bodyGradient = ctx.createLinearGradient(0, -14, 0, 14);
+  bodyGradient.addColorStop(0, palette.body);
+  bodyGradient.addColorStop(0.62, palette.wing);
+  bodyGradient.addColorStop(1, palette.chest);
+  ctx.fillStyle = bodyGradient;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 31, 13.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = palette.chest;
+  ctx.beginPath();
+  ctx.ellipse(8, 5, 18, 7.5, 0.1, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(60,35,20,.45)";
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  for (let streak = 0; streak < 4; streak += 1) {
+    ctx.moveTo(-2 + streak * 6, 2);
+    ctx.lineTo(-1 + streak * 6, 8);
+  }
+  ctx.stroke();
+
+  if (eagle.mode === "carryPrey") {
+    ctx.save();
+    ctx.translate(12, 30);
+    ctx.rotate(Math.sin(elapsed * 8) * 0.18 + 0.9);
+    drawRodent(ctx, 0, 6, 1, elapsed, eagle.phase, 0.85, false, 1, false);
+    ctx.restore();
+  }
+
+  ctx.strokeStyle = "#e0b23f";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  if (legsOut) {
+    ctx.moveTo(6, 9);
+    ctx.lineTo(13, 26);
+    ctx.moveTo(14, 9);
+    ctx.lineTo(20, 25);
+  } else {
+    ctx.moveTo(4, 9);
+    ctx.lineTo(3, 15);
+    ctx.moveTo(11, 9);
+    ctx.lineTo(10, 15);
+  }
+  ctx.stroke();
+  ctx.strokeStyle = "#2a1c12";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  if (legsOut) {
+    [13, 20].forEach((footX, index) => {
+      const footY = 26 - index;
+      ctx.moveTo(footX, footY);
+      ctx.quadraticCurveTo(footX + 6, footY + 2, footX + 7, footY + 7);
+      ctx.moveTo(footX, footY);
+      ctx.quadraticCurveTo(footX + 1, footY + 5, footX - 1, footY + 9);
+      ctx.moveTo(footX, footY);
+      ctx.quadraticCurveTo(footX - 5, footY + 3, footX - 7, footY + 6);
+    });
+  } else {
+    ctx.moveTo(3, 15);
+    ctx.lineTo(6, 18);
+    ctx.moveTo(10, 15);
+    ctx.lineTo(13, 18);
+  }
+  ctx.stroke();
+
+  ctx.fillStyle = palette.crest;
+  ctx.beginPath();
+  ctx.moveTo(19, -12);
+  ctx.lineTo(10, -30);
+  ctx.lineTo(21, -18);
+  ctx.lineTo(19, -33);
+  ctx.lineTo(27, -18);
+  ctx.lineTo(30, -28);
+  ctx.lineTo(31, -14);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = palette.chest;
+  ctx.beginPath();
+  ctx.arc(28, -8, 10.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = palette.body;
+  ctx.beginPath();
+  ctx.moveTo(22, -14);
+  ctx.quadraticCurveTo(30, -18, 38, -10);
+  ctx.quadraticCurveTo(30, -12, 22, -9);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "#e5b23a";
+  ctx.beginPath();
+  ctx.moveTo(36, -12);
+  ctx.quadraticCurveTo(50, -11, 48, -2);
+  ctx.quadraticCurveTo(45, 0, 41, -3);
+  ctx.quadraticCurveTo(38, -6, 36, -6);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "#3a2410";
+  ctx.beginPath();
+  ctx.moveTo(48, -6);
+  ctx.quadraticCurveTo(49, -2, 46, -1);
+  ctx.quadraticCurveTo(47, -3, 46, -5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "#fff6d8";
+  ctx.beginPath();
+  ctx.ellipse(31, -10, 3.6, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#1a120c";
+  ctx.beginPath();
+  ctx.arc(32.2, -10, 1.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = palette.crest;
+  ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  ctx.moveTo(25, -15);
+  ctx.lineTo(37, -12.5);
+  ctx.stroke();
+
+  drawEagleWing(ctx, palette, flap, false);
+  ctx.restore();
+}
+
+function drawEagleShadow(ctx: CanvasRenderingContext2D, eagle: Eagle) {
+  const height = Math.max(0, Math.min(1, (EAGLE_GROUND_Y - eagle.y) / 520));
+  ctx.fillStyle = `rgba(12,30,14,${0.34 * (1 - height * 0.7)})`;
+  ctx.beginPath();
+  ctx.ellipse(
+    eagle.x,
+    EAGLE_GROUND_Y + 6,
+    54 * eagle.scale * (1 - height * 0.5),
+    9 * (1 - height * 0.4),
+    0,
+    0,
+    Math.PI * 2,
+  );
+  ctx.fill();
+}
+
+function drawEagleHud(ctx: CanvasRenderingContext2D, game: GameState) {
+  const field = game.eagle;
+  const { elapsed } = game;
+  const caught = field.caughtBy !== null;
+  const threat = threateningEagle(field);
+  const pulse = (Math.sin(elapsed * 12) + 1) / 2;
+
+  ctx.fillStyle = "rgba(20,44,30,.84)";
+  roundedRect(ctx, 18, 18, 214, 58, 12);
+  ctx.fill();
+  ctx.strokeStyle = field.health <= 25 ? "#ff765f" : "rgba(255,240,200,.3)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.fillStyle = "#fff2cf";
+  ctx.font = "900 11px Arial";
+  ctx.textAlign = "left";
+  ctx.fillText("HEALTH", 34, 38);
+  ctx.textAlign = "right";
+  ctx.fillText(`${Math.round(field.health)} / ${EAGLE_MAX_HEALTH}`, 216, 38);
+  ctx.fillStyle = "rgba(255,245,215,.2)";
+  roundedRect(ctx, 34, 48, 182, 13, 7);
+  ctx.fill();
+  ctx.fillStyle =
+    field.health <= 25 ? "#ff765f" : field.health <= 50 ? "#e4b34b" : "#7fd06a";
+  roundedRect(
+    ctx,
+    34,
+    48,
+    Math.max(6, (182 * field.health) / EAGLE_MAX_HEALTH),
+    13,
+    7,
+  );
+  ctx.fill();
+
+  const handsText = caught
+    ? "TALONS LOCKED · MASH SPACE"
+    : field.carrying?.kind === "rodent"
+      ? field.overhead
+        ? "RODENT RAISED ▲ FEED THE EAGLE"
+        : "RODENT · HOLD Z TO RAISE"
+      : field.carrying?.kind === "fruit"
+        ? "FRUIT · HOLD Z TO EAT · SPACE DROPS"
+        : "HANDS EMPTY · SPACE GRABS A RODENT";
+  ctx.fillStyle = "rgba(20,44,30,.84)";
+  roundedRect(ctx, WORLD_WIDTH - 18 - 292, 18, 292, 58, 12);
+  ctx.fill();
+  ctx.strokeStyle = field.overhead ? "#b4ec6d" : "rgba(255,240,200,.3)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.fillStyle = "rgba(255,242,207,.7)";
+  ctx.font = "900 10px Arial";
+  ctx.textAlign = "left";
+  ctx.fillText("HANDS", WORLD_WIDTH - 18 - 276, 37);
+  ctx.fillStyle = field.overhead ? "#d7ff9c" : "#fff2cf";
+  ctx.font = "900 11px Arial";
+  ctx.fillText(handsText, WORLD_WIDTH - 18 - 276, 58);
+
+  if (caught) {
+    const remaining = Math.max(0, EAGLE_HOLD_LIMIT - field.holdTime);
+    ctx.fillStyle = "rgba(68,24,18,.92)";
+    roundedRect(ctx, 415, 24, 370, 92, 14);
+    ctx.fill();
+    ctx.strokeStyle = remaining < 1 ? "#ff765f" : "#e4b34b";
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.fillStyle = "#fff2cf";
+    ctx.font = `900 ${13 + pulse * 2}px Arial`;
+    ctx.textAlign = "center";
+    ctx.fillText("MASH SPACE TO BREAK FREE!", 600, 50);
+    ctx.fillStyle = "rgba(255,245,215,.2)";
+    roundedRect(ctx, 450, 62, 300, 12, 6);
+    ctx.fill();
+    ctx.fillStyle = "#8ee46f";
+    roundedRect(ctx, 450, 62, Math.max(6, 300 * Math.min(1, field.struggle)), 12, 6);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,245,215,.2)";
+    roundedRect(ctx, 450, 80, 300, 8, 4);
+    ctx.fill();
+    ctx.fillStyle = remaining < 1 ? "#ff765f" : "#e4b34b";
+    roundedRect(ctx, 450, 80, Math.max(4, 300 * (remaining / EAGLE_HOLD_LIMIT)), 8, 4);
+    ctx.fill();
+    ctx.fillStyle = "#fff2cf";
+    ctx.font = "900 11px Arial";
+    ctx.fillText(`${remaining.toFixed(1)}s before the eagle flies off with you`, 600, 106);
+  } else if (threat) {
+    ctx.fillStyle = `rgba(150,30,22,${0.72 + pulse * 0.2})`;
+    roundedRect(ctx, 468, 24, 264, 42, 12);
+    ctx.fill();
+    ctx.strokeStyle = "#ffb08a";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = "#fff2cf";
+    ctx.font = "900 14px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText(
+      threat.mode === "lock" ? "EAGLE LOCKED ON — RAISE A RODENT!" : "EAGLE DIVING!",
+      600,
+      51,
+    );
+  }
+
+  if (game.noticeTimer > 0 && game.notice) {
+    const fade = Math.min(1, game.noticeTimer / 0.4);
+    ctx.fillStyle = `rgba(20,44,30,${0.82 * fade})`;
+    roundedRect(ctx, 420, 128, 360, 36, 10);
+    ctx.fill();
+    ctx.fillStyle = `rgba(255,242,207,${fade})`;
+    ctx.font = "900 12px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText(game.notice, 600, 151);
+  }
+}
+
+function drawEagleWorld(
+  ctx: CanvasRenderingContext2D,
+  game: GameState,
+  activeCharacter: Character,
+) {
+  const { elapsed, player } = game;
+  const field = game.eagle;
+  const caught = field.caughtBy !== null;
+  ctx.clearRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+
+  const sky = ctx.createLinearGradient(0, 0, 0, WORLD_HEIGHT);
+  sky.addColorStop(0, "#4f9fcf");
+  sky.addColorStop(0.42, "#a9d8e8");
+  sky.addColorStop(0.68, "#f1dfb0");
+  sky.addColorStop(1, "#d4b072");
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+
+  const sun = ctx.createRadialGradient(300, 84, 10, 300, 84, 230);
+  sun.addColorStop(0, "rgba(255,247,205,.95)");
+  sun.addColorStop(0.12, "rgba(255,236,160,.6)");
+  sun.addColorStop(1, "rgba(255,236,160,0)");
+  ctx.fillStyle = sun;
+  ctx.fillRect(40, 0, 560, 340);
+
+  ctx.fillStyle = "rgba(255,255,255,.78)";
+  for (let cloud = 0; cloud < 5; cloud += 1) {
+    const x = ((cloud * 263 + elapsed * (6 + cloud * 2)) % (WORLD_WIDTH + 260)) - 130;
+    const y = 58 + (cloud % 3) * 46;
+    for (let puff = 0; puff < 4; puff += 1) {
+      ctx.beginPath();
+      ctx.ellipse(
+        x + puff * 26 - 39,
+        y + (puff % 2) * 5,
+        28 + (puff % 2) * 8,
+        13 + (puff % 3) * 3,
+        0,
+        0,
+        Math.PI * 2,
+      );
+      ctx.fill();
+    }
+  }
+
+  const drawRidge = (baseY: number, color: string, offset: number) => {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(-30, WORLD_HEIGHT);
+    ctx.lineTo(-30, baseY);
+    for (let x = -30; x <= WORLD_WIDTH + 80; x += 90) {
+      const crest =
+        baseY - 40 - Math.abs(Math.sin((x + offset) * 0.009)) * 74 - ((x + offset) % 3) * 6;
+      ctx.quadraticCurveTo(x + 35, crest, x + 90, baseY - 10);
+    }
+    ctx.lineTo(WORLD_WIDTH + 80, WORLD_HEIGHT);
+    ctx.closePath();
+    ctx.fill();
+  };
+  drawRidge(372, "rgba(84,140,150,.38)", 60);
+  drawRidge(404, "rgba(48,110,96,.5)", 190);
+
+  ctx.fillStyle = "#2f6d45";
+  for (let i = 0; i < 30; i += 1) {
+    const r = 26 + (i % 4) * 7;
+    ctx.beginPath();
+    ctx.ellipse(i * 44 - 20, 418 - (i % 3) * 8, r, r * 0.8, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = "#3d8250";
+  for (let i = 0; i < 26; i += 1) {
+    ctx.beginPath();
+    ctx.ellipse(i * 50 + 5, 432 - (i % 2) * 6, 30, 20, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const meadow = ctx.createLinearGradient(0, 430, 0, WORLD_HEIGHT);
+  meadow.addColorStop(0, "#9ec455");
+  meadow.addColorStop(0.45, "#6ea540");
+  meadow.addColorStop(1, "#3f7a35");
+  ctx.fillStyle = meadow;
+  ctx.fillRect(0, 436, WORLD_WIDTH, WORLD_HEIGHT - 436);
+
+  const path = ctx.createLinearGradient(0, 522, 0, 560);
+  path.addColorStop(0, "#c9a267");
+  path.addColorStop(0.5, "#b08556");
+  path.addColorStop(1, "#8a6540");
+  ctx.fillStyle = path;
+  ctx.beginPath();
+  ctx.moveTo(-10, 528);
+  for (let x = 0; x <= WORLD_WIDTH; x += 60) {
+    ctx.quadraticCurveTo(x + 30, 522 + ((x / 60) % 2) * 6, x + 60, 526);
+  }
+  ctx.lineTo(WORLD_WIDTH + 10, 560);
+  for (let x = WORLD_WIDTH; x >= 0; x -= 60) {
+    ctx.quadraticCurveTo(x - 30, 566 - ((x / 60) % 2) * 5, x - 60, 560);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "rgba(90,60,35,.35)";
+  for (let stone = 0; stone < 22; stone += 1) {
+    ctx.beginPath();
+    ctx.ellipse(30 + stone * 54, 532 + (stone % 4) * 6, 4 + (stone % 3), 2.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  for (let x = 8; x < WORLD_WIDTH; x += 26) {
+    drawLeaf(
+      ctx,
+      x,
+      522,
+      14 + (x % 5),
+      -1.4 + Math.sin(elapsed * 1.1 + x * 0.3) * 0.08,
+      x % 3 ? "#7fb44a" : "#a6c655",
+    );
+  }
+  for (let flower = 0; flower < 14; flower += 1) {
+    ctx.fillStyle = flower % 2 ? "#f7d84c" : "#f08bb0";
+    ctx.beginPath();
+    ctx.arc(240 + flower * 55 + (flower % 3) * 9, 470 + (flower % 4) * 12, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const drawForestEdge = (side: -1 | 1) => {
+    const edgeX = side < 0 ? 0 : WORLD_WIDTH;
+    ctx.fillStyle = "rgba(12,44,30,.22)";
+    ctx.fillRect(
+      side < 0 ? -10 : EAGLE_SAFE_RIGHT,
+      436,
+      side < 0 ? EAGLE_SAFE_LEFT + 10 : WORLD_WIDTH - EAGLE_SAFE_RIGHT + 10,
+      WORLD_HEIGHT - 436,
+    );
+    [
+      [edgeX - side * 60, 34],
+      [edgeX - side * 150, 22],
+    ].forEach(([trunkX, width], index) => {
+      const trunk = ctx.createLinearGradient(trunkX - width / 2, 0, trunkX + width / 2, 0);
+      trunk.addColorStop(0, "#30251d");
+      trunk.addColorStop(0.5, "#7d5230");
+      trunk.addColorStop(1, "#3d2b20");
+      ctx.fillStyle = trunk;
+      ctx.beginPath();
+      ctx.moveTo(trunkX - width / 2 - 6, 560);
+      ctx.quadraticCurveTo(trunkX - width / 2, 300, trunkX - width / 2 + 4, 120 + index * 40);
+      ctx.lineTo(trunkX + width / 2 - 4, 120 + index * 40);
+      ctx.quadraticCurveTo(trunkX + width / 2, 300, trunkX + width / 2 + 6, 560);
+      ctx.closePath();
+      ctx.fill();
+    });
+    const canopyX = edgeX - side * 70;
+    ctx.fillStyle = "#1f5a3a";
+    ctx.beginPath();
+    ctx.ellipse(canopyX, 120, 210, 120, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#2c6f45";
+    ctx.beginPath();
+    ctx.ellipse(canopyX - side * 90, 70, 150, 80, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#3a7f4b";
+    ctx.beginPath();
+    ctx.ellipse(canopyX + side * 30, 190, 150, 70, 0, 0, Math.PI * 2);
+    ctx.fill();
+    for (let leaf = 0; leaf < 9; leaf += 1) {
+      drawLeaf(
+        ctx,
+        canopyX - side * (leaf * 22 - 60),
+        150 + (leaf % 4) * 30 + Math.sin(elapsed * 0.9 + leaf) * 3,
+        40 + (leaf % 3) * 10,
+        side < 0 ? 0.5 + leaf * 0.35 : 2.6 + leaf * 0.35,
+        leaf % 2 ? "#4f9151" : "#77a84f",
+      );
+    }
+  };
+  drawForestEdge(-1);
+  drawForestEdge(1);
+
+  ctx.fillStyle = "#593b22";
+  roundedRect(ctx, 182, 452, 12, 82, 3);
+  ctx.fill();
+  ctx.fillStyle = "#e1a644";
+  roundedRect(ctx, 140, 426, 96, 38, 6);
+  ctx.fill();
+  ctx.strokeStyle = "#8d5529";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.fillStyle = "#3a281c";
+  ctx.font = "900 10px Arial";
+  ctx.textAlign = "center";
+  ctx.fillText("EAGLES AHEAD", 188, 442);
+  ctx.fillText("RODENTS = SHIELDS", 188, 456);
+
+  ctx.fillStyle = "#593b22";
+  roundedRect(ctx, 1118, 428, 15, 108, 4);
+  ctx.fill();
+  ctx.fillStyle = "#e1a644";
+  roundedRect(ctx, 1064, 404, 122, 56, 7);
+  ctx.fill();
+  ctx.strokeStyle = "#8d5529";
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.fillStyle = "#3a281c";
+  ctx.font = "800 15px Arial";
+  ctx.fillText("TRAIL  →", 1125, 438);
+
+  field.eagles.forEach((eagle) => {
+    if (!eagle.dormant && eagle.mode !== "away" && eagle.y > -40) drawEagleShadow(ctx, eagle);
+  });
+
+  const threat = threateningEagle(field);
+  if (threat && !caught) {
+    const pulse = (Math.sin(elapsed * 12) + 1) / 2;
+    ctx.strokeStyle = `rgba(220,60,40,${0.45 + pulse * 0.4})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.ellipse(player.x, EAGLE_GROUND_Y + 5, 34 + pulse * 6, 9 + pulse * 2, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  field.fruits.forEach((fruit) => drawFruit(ctx, fruit.x, EAGLE_GROUND_Y, fruit.kind));
+  field.rodents.forEach((rodent) =>
+    drawRodent(
+      ctx,
+      rodent.x,
+      EAGLE_GROUND_Y,
+      rodent.vx >= 0 ? 1 : -1,
+      elapsed,
+      rodent.phase,
+      rodent.size,
+      rodent.pause <= 0,
+    ),
+  );
+
+  if (field.carrying === null && player.onGround && !caught) {
+    [...field.rodents.map((rodent) => rodent.x), ...field.fruits.map((fruit) => fruit.x)]
+      .filter((x) => Math.abs(x - player.x) < 40)
+      .forEach((x) => {
+        ctx.strokeStyle = "rgba(255,244,170,.85)";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.ellipse(x, EAGLE_GROUND_Y + 3, 22, 7, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      });
+  }
+
+  const companion: Character = activeCharacter === "guto" ? "nanda" : "guto";
+  drawCharacter(
+    ctx,
+    62,
+    EAGLE_GROUND_Y,
+    companion,
+    1,
+    elapsed,
+    player.x > EAGLE_SAFE_LEFT ? "wave" : "idle",
+    0,
+    0.88,
+  );
+  if (player.x > EAGLE_SAFE_LEFT && player.x < 620 && !caught) {
+    const bubbleY = 372 + Math.sin(elapsed * 2.8) * 2;
+    ctx.fillStyle = "rgba(247,232,186,.92)";
+    roundedRect(ctx, 14, bubbleY, 150, 34, 13);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(58, bubbleY + 31);
+    ctx.lineTo(66, bubbleY + 43);
+    ctx.lineTo(74, bubbleY + 31);
+    ctx.fill();
+    ctx.fillStyle = "#244638";
+    ctx.font = "800 11px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("RAISE A RODENT!", 89, bubbleY + 21);
+  }
+
+  if (!caught) {
+    if (player.onGround && Math.abs(player.vx) > 120) {
+      ctx.fillStyle = "rgba(224,190,121,.32)";
+      for (let dust = 0; dust < 4; dust += 1) {
+        const direction = player.vx > 0 ? -1 : 1;
+        ctx.beginPath();
+        ctx.arc(player.x + direction * (14 + dust * 8), player.y - 2 - dust * 2, 3 + dust, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    const playerMotion: CharacterMotion = !player.onGround
+      ? player.vy < 0
+        ? "jump"
+        : "fall"
+      : field.carrying
+        ? field.overhead
+          ? "lift"
+          : "carry"
+        : Math.abs(player.vx) > 24
+          ? "run"
+          : "idle";
+    drawCharacter(
+      ctx,
+      player.x,
+      player.y,
+      activeCharacter,
+      player.facing,
+      elapsed,
+      playerMotion,
+      player.vx,
+      1.08,
+    );
+    if (field.carrying?.kind === "rodent") {
+      if (field.overhead) {
+        drawRodent(
+          ctx,
+          player.x + player.facing * 2,
+          player.y - 100,
+          player.facing,
+          elapsed,
+          field.carrying.phase,
+          field.carrying.size * 0.95,
+          false,
+          1,
+          false,
+        );
+      } else {
+        drawRodent(
+          ctx,
+          player.x + player.facing * 16,
+          player.y - 31,
+          player.facing,
+          elapsed,
+          field.carrying.phase,
+          field.carrying.size * 0.9,
+          false,
+          0.6,
+          false,
+        );
+      }
+    } else if (field.carrying?.kind === "fruit") {
+      const eating = field.eatProgress > 0;
+      drawFruit(
+        ctx,
+        player.x + player.facing * (eating ? 12 : 17),
+        eating ? player.y - 60 : player.y - 30,
+        field.carrying.fruitKind,
+        eating ? 1 - field.eatProgress * 0.5 : 1,
+        false,
+      );
+    }
+    if (field.landRecovery > 0 && player.onGround) {
+      ctx.fillStyle = "#f4cf54";
+      ctx.font = "900 14px Arial";
+      ctx.textAlign = "center";
+      for (let star = 0; star < 3; star += 1) {
+        const orbit = elapsed * 4 + star * ((Math.PI * 2) / 3);
+        ctx.fillText("✦", player.x + Math.cos(orbit) * 22, player.y - 96 + Math.sin(orbit) * 6);
+      }
+    }
+  }
+
+  field.eagles.forEach((eagle) => {
+    if (eagle.dormant || eagle.mode === "away") return;
+    if (eagle.mode === "carryPlayer") {
+      drawCharacter(ctx, player.x, player.y, activeCharacter, player.facing, elapsed, "hang", 0, 1.08);
+    }
+    drawEagle(ctx, eagle, elapsed);
+  });
+
+  if (threat && !caught) {
+    const bounce = Math.abs(Math.sin(elapsed * 9)) * 6;
+    ctx.fillStyle = "#ff5a45";
+    ctx.font = "900 26px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("!", player.x, player.y - 118 - bounce);
+  }
+
+  for (let x = -6; x < WORLD_WIDTH; x += 34) {
+    drawLeaf(
+      ctx,
+      x,
+      572 + (x % 3) * 6,
+      26 + (x % 4) * 3,
+      -1.5 + Math.sin(elapsed * 1.3 + x * 0.2) * 0.07,
+      x % 2 ? "#3f7f3a" : "#568f3f",
+    );
+  }
+
+  drawEagleHud(ctx, game);
+
+  if (!game.running && !game.won && !game.lost) {
+    ctx.fillStyle = "rgba(5,29,27,.18)";
+    ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+  }
+}
+
+function drawHippo(
+  ctx: CanvasRenderingContext2D,
+  hippo: Hippo,
+  elapsed: number,
+  occupiedZone: HippoZone | null,
+) {
+  const sinkOffset = hippo.sink * 78;
+  const shake = hippo.mode === "shake" ? Math.sin(elapsed * 42) * 5 : 0;
+  const angry = hippo.mode === "chomp" || hippo.mode === "shake" || hippo.mode === "dive";
+  const baseY = HIPPO_WATER_Y - 8 + hippo.bob + sinkOffset;
+  const body = "#7d6d80";
+  const shade = "#584a5c";
+  const belly = "#a595a8";
+  const outline = "#3a2f3d";
+
+  ctx.save();
+  ctx.translate(hippo.x, baseY);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  ctx.fillStyle = outline;
+  ctx.beginPath();
+  ctx.moveTo(86, 6);
+  ctx.quadraticCurveTo(92, -62, 140, -60);
+  ctx.quadraticCurveTo(188, -62, 198, -18);
+  ctx.lineTo(198, 30);
+  ctx.lineTo(86, 30);
+  ctx.closePath();
+  ctx.fill();
+  const backGradient = ctx.createLinearGradient(0, -60, 0, 30);
+  backGradient.addColorStop(0, "#8f7f92");
+  backGradient.addColorStop(0.55, body);
+  backGradient.addColorStop(1, shade);
+  ctx.fillStyle = backGradient;
+  ctx.beginPath();
+  ctx.moveTo(88, 6);
+  ctx.quadraticCurveTo(94, -58, 140, -56);
+  ctx.quadraticCurveTo(186, -58, 195, -18);
+  ctx.lineTo(195, 28);
+  ctx.lineTo(88, 28);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,240,245,.16)";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(100, -40);
+  ctx.quadraticCurveTo(140, -52, 180, -36);
+  ctx.stroke();
+  ctx.fillStyle = "rgba(40,30,45,.22)";
+  for (let fold = 0; fold < 3; fold += 1) {
+    ctx.beginPath();
+    ctx.ellipse(112 + fold * 24, -18 + fold * 4, 9, 3, -0.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.strokeStyle = shade;
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.moveTo(192, -12);
+  ctx.quadraticCurveTo(204, -4, 200, 12);
+  ctx.stroke();
+
+  ctx.save();
+  ctx.translate(shake, 0);
+  ctx.fillStyle = outline;
+  roundedRect(ctx, 42, -40, 56, 72, 16);
+  ctx.fill();
+  const headGradient = ctx.createLinearGradient(0, -40, 0, 30);
+  headGradient.addColorStop(0, "#8b7b8e");
+  headGradient.addColorStop(1, shade);
+  ctx.fillStyle = headGradient;
+  roundedRect(ctx, 44, -38, 52, 68, 15);
+  ctx.fill();
+  [56, 82].forEach((earX) => {
+    ctx.fillStyle = outline;
+    ctx.beginPath();
+    ctx.arc(earX, -40, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = body;
+    ctx.beginPath();
+    ctx.arc(earX, -40, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#d59aa7";
+    ctx.beginPath();
+    ctx.arc(earX, -40, 3, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  [54, 76].forEach((eyeX) => {
+    ctx.fillStyle = "#fff5e6";
+    ctx.beginPath();
+    ctx.ellipse(eyeX, -24, 6, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#1e1418";
+    ctx.beginPath();
+    ctx.arc(eyeX - 1.5, -24, 2.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.beginPath();
+    ctx.arc(eyeX - 2.5, -25.5, 0.9, 0, Math.PI * 2);
+    ctx.fill();
+    if (angry) {
+      ctx.strokeStyle = outline;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(eyeX - 7, -33);
+      ctx.lineTo(eyeX + 6, -29);
+      ctx.stroke();
+    }
+  });
+
+  ctx.save();
+  ctx.translate(46, -6);
+  ctx.rotate(-hippo.mouthOpen * 0.28);
+  ctx.translate(-46, 6);
+  ctx.fillStyle = outline;
+  roundedRect(ctx, -4, -22, 54, 28, 12);
+  ctx.fill();
+  const snoutGradient = ctx.createLinearGradient(0, -22, 0, 6);
+  snoutGradient.addColorStop(0, "#8b7b8e");
+  snoutGradient.addColorStop(1, body);
+  ctx.fillStyle = snoutGradient;
+  roundedRect(ctx, -2, -20, 52, 25, 11);
+  ctx.fill();
+  ctx.fillStyle = "#2f2430";
+  ctx.beginPath();
+  ctx.ellipse(8, -13, 3.2, 2.2, 0.2, 0, Math.PI * 2);
+  ctx.ellipse(19, -14, 3.2, 2.2, -0.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  const jawAngle = hippo.mouthOpen * 0.78;
+  ctx.save();
+  ctx.translate(46, 4);
+  ctx.rotate(jawAngle);
+  ctx.fillStyle = "#d9788b";
+  roundedRect(ctx, -50, -3, 50, 14, 6);
+  ctx.fill();
+  ctx.fillStyle = outline;
+  roundedRect(ctx, -52, 2, 54, 18, 8);
+  ctx.fill();
+  ctx.fillStyle = belly;
+  roundedRect(ctx, -50, 4, 50, 14, 7);
+  ctx.fill();
+  ctx.fillStyle = "#f4ecd8";
+  ctx.beginPath();
+  ctx.moveTo(-44, 4);
+  ctx.lineTo(-40, -6);
+  ctx.lineTo(-36, 4);
+  ctx.moveTo(-30, 4);
+  ctx.lineTo(-27, -3);
+  ctx.lineTo(-24, 4);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+  if (hippo.mouthOpen > 0.2) {
+    ctx.fillStyle = "#f4ecd8";
+    ctx.beginPath();
+    ctx.moveTo(2, 4);
+    ctx.lineTo(5, 12 * hippo.mouthOpen);
+    ctx.lineTo(8, 4);
+    ctx.moveTo(16, 4);
+    ctx.lineTo(19, 9 * hippo.mouthOpen);
+    ctx.lineTo(22, 4);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+
+  if (hippo.bird) {
+    const hop = Math.abs(Math.sin(elapsed * 6 + hippo.id)) * 3;
+    ctx.save();
+    ctx.translate(150, -58 - hop);
+    ctx.fillStyle = "#4b3a2e";
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 7, 4.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(-6, -4, 3.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#e0432f";
+    ctx.beginPath();
+    ctx.moveTo(-9, -4);
+    ctx.lineTo(-14, -3);
+    ctx.lineTo(-9, -2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#f3d69b";
+    ctx.beginPath();
+    ctx.arc(-6.5, -4.8, 1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#e0432f";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(-2, 4);
+    ctx.lineTo(-2, 7);
+    ctx.moveTo(2, 4);
+    ctx.lineTo(2, 7);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  if (occupiedZone) {
+    const span = zoneSpan(hippo, occupiedZone);
+    ctx.strokeStyle =
+      occupiedZone === "back"
+        ? "rgba(180,236,109,.55)"
+        : occupiedZone === "head"
+          ? "rgba(255,200,90,.6)"
+          : "rgba(255,110,90,.7)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.ellipse((span.start + span.end) / 2 - hippo.x, span.y - baseY + 3, (span.end - span.start) / 2, 6, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  ctx.restore();
+}
+
+function drawHippoHud(ctx: CanvasRenderingContext2D, game: GameState) {
+  const river = game.hippo;
+  const { elapsed, player } = game;
+  const standing = river.standing;
+
+  ctx.fillStyle = "rgba(20,44,30,.84)";
+  roundedRect(ctx, 18, 18, 318, 52, 12);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,240,200,.3)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.fillStyle = "rgba(255,242,207,.7)";
+  ctx.font = "900 10px Arial";
+  ctx.textAlign = "left";
+  ctx.fillText("JUMPS", 34, 37);
+  ctx.fillStyle = "#fff2cf";
+  ctx.font = "900 11px Arial";
+  ctx.fillText("SPACE short hop · hold Z + SPACE long jump", 34, 56);
+
+  ctx.fillStyle = "rgba(20,44,30,.84)";
+  roundedRect(ctx, WORLD_WIDTH - 18 - 236, 18, 236, 52, 12);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,240,200,.3)";
+  ctx.stroke();
+  ctx.fillStyle = "rgba(255,242,207,.7)";
+  ctx.font = "900 10px Arial";
+  ctx.fillText("LANDING SPOTS", WORLD_WIDTH - 18 - 220, 37);
+  ctx.font = "900 11px Arial";
+  ctx.fillStyle = "#ff9b86";
+  ctx.fillText("MOUTH ✕", WORLD_WIDTH - 18 - 220, 56);
+  ctx.fillStyle = "#ffd27a";
+  ctx.fillText("HEAD 0.7s", WORLD_WIDTH - 18 - 150, 56);
+  ctx.fillStyle = "#b4ec6d";
+  ctx.fillText(`BACK ${HIPPO_BACK_LIMIT.toFixed(1)}s`, WORLD_WIDTH - 18 - 72, 56);
+
+  if (standing && "hippo" in standing && !river.lost) {
+    const hippo = river.hippos[standing.hippo];
+    const limit = zoneLimit(standing.zone, hippo);
+    const used = standing.zone === "back" ? river.backTime : river.zoneTimer;
+    const remaining = Math.max(0, limit - used);
+    const x = hippo.x + HIPPO_LENGTH / 2;
+    const y = HIPPO_WATER_Y + hippo.bob - 124;
+    const color =
+      standing.zone === "back" ? (remaining < 0.8 ? "#ff765f" : "#b4ec6d") : standing.zone === "head" ? "#ffd27a" : "#ff765f";
+    ctx.fillStyle = "rgba(20,44,30,.8)";
+    roundedRect(ctx, x - 62, y - 14, 124, 30, 8);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,245,215,.2)";
+    roundedRect(ctx, x - 52, y - 4, 104, 8, 4);
+    ctx.fill();
+    ctx.fillStyle = color;
+    roundedRect(ctx, x - 52, y - 4, Math.max(4, 104 * (remaining / limit)), 8, 4);
+    ctx.fill();
+    ctx.fillStyle = "#fff2cf";
+    ctx.font = "900 9px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText(
+      standing.zone === "mouth" ? "MOUTH — NO!" : standing.zone === "head" ? "HEAD — HOP NOW" : "BACK — REST, THEN GO",
+      x,
+      y + 12,
+    );
+  }
+
+  if (river.chargeHeld > 0 && player.onGround && !river.lost) {
+    const x = player.x;
+    const y = player.y - 112;
+    const fill = Math.min(1, river.charge / HIPPO_MAX_CHARGE);
+    const over = river.chargeHeld > HIPPO_OVERCHARGE_START;
+    const sweetStart = 1 / HIPPO_MAX_CHARGE;
+    ctx.fillStyle = "rgba(20,44,30,.85)";
+    roundedRect(ctx, x - 48, y - 12, 96, 26, 7);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,245,215,.18)";
+    roundedRect(ctx, x - 40, y - 4, 80, 8, 4);
+    ctx.fill();
+    ctx.fillStyle = "rgba(180,236,109,.35)";
+    ctx.fillRect(x - 40 + 80 * sweetStart - 4, y - 4, 10, 8);
+    ctx.fillStyle = over ? "#ff765f" : river.charge >= 1 ? "#b4ec6d" : "#e4b34b";
+    roundedRect(ctx, x - 40, y - 4, Math.max(3, 80 * fill), 8, 4);
+    ctx.fill();
+    ctx.fillStyle = "#fff2cf";
+    ctx.font = "900 8px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText(over ? "TOO MUCH!" : river.charge >= 1 ? "LONG JUMP READY" : "CHARGING…", x, y + 10);
+  }
+
+  if (game.noticeTimer > 0 && game.notice) {
+    const fade = Math.min(1, game.noticeTimer / 0.4);
+    ctx.fillStyle = `rgba(20,44,30,${0.82 * fade})`;
+    roundedRect(ctx, 420, 92, 360, 36, 10);
+    ctx.fill();
+    ctx.fillStyle = `rgba(255,242,207,${fade})`;
+    ctx.font = "900 12px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText(game.notice, 600, 115);
+  }
+  void elapsed;
+}
+
+function drawHippoWorld(
+  ctx: CanvasRenderingContext2D,
+  game: GameState,
+  activeCharacter: Character,
+) {
+  const { elapsed, player } = game;
+  const river = game.hippo;
+  ctx.clearRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+
+  const sky = ctx.createLinearGradient(0, 0, 0, WORLD_HEIGHT);
+  sky.addColorStop(0, "#f3b46b");
+  sky.addColorStop(0.35, "#f0865a");
+  sky.addColorStop(0.6, "#c86a63");
+  sky.addColorStop(1, "#3d4a5a");
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+
+  const sun = ctx.createRadialGradient(880, 300, 20, 880, 300, 260);
+  sun.addColorStop(0, "rgba(255,240,190,.95)");
+  sun.addColorStop(0.16, "rgba(255,210,130,.65)");
+  sun.addColorStop(1, "rgba(255,190,120,0)");
+  ctx.fillStyle = sun;
+  ctx.fillRect(560, 40, 640, 460);
+  ctx.fillStyle = "#ffe9b3";
+  ctx.beginPath();
+  ctx.arc(880, 300, 44, 0, Math.PI * 2);
+  ctx.fill();
+
+  const drawRidge = (baseY: number, color: string, offset: number, height: number) => {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(-30, WORLD_HEIGHT);
+    ctx.lineTo(-30, baseY);
+    for (let x = -30; x <= WORLD_WIDTH + 80; x += 90) {
+      const crest = baseY - 20 - Math.abs(Math.sin((x + offset) * 0.008)) * height - ((x + offset) % 3) * 6;
+      ctx.quadraticCurveTo(x + 35, crest, x + 90, baseY - 10);
+    }
+    ctx.lineTo(WORLD_WIDTH + 80, WORLD_HEIGHT);
+    ctx.closePath();
+    ctx.fill();
+  };
+  drawRidge(340, "rgba(120,70,100,.45)", 80, 90);
+  drawRidge(372, "rgba(70,45,80,.6)", 260, 70);
+
+  ctx.fillStyle = "#2f3a3a";
+  for (let i = 0; i < 34; i += 1) {
+    const x = i * 38 - 16;
+    const height = 26 + (i % 4) * 9;
+    ctx.beginPath();
+    ctx.ellipse(x, 372 - height / 2, 22 + (i % 3) * 6, height / 2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillRect(x - 2, 372 - height / 2, 4, height / 2 + 20);
+  }
+  ctx.fillStyle = "#3b4a44";
+  for (let i = 0; i < 40; i += 1) {
+    ctx.beginPath();
+    ctx.ellipse(i * 32 + 4, 394 - (i % 2) * 5, 20, 12, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const farShore = ctx.createLinearGradient(0, 398, 0, 420);
+  farShore.addColorStop(0, "#6b7d4f");
+  farShore.addColorStop(1, "#4d5f3b");
+  ctx.fillStyle = farShore;
+  ctx.fillRect(0, 398, WORLD_WIDTH, 24);
+  for (let x = 0; x < WORLD_WIDTH; x += 14) {
+    ctx.strokeStyle = x % 3 ? "#7d9552" : "#5a7a3f";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x, 412);
+    ctx.quadraticCurveTo(x + 3 + Math.sin(elapsed * 1.3 + x) * 2, 398, x + 6, 386 - (x % 5) * 3);
+    ctx.stroke();
+  }
+
+  const water = ctx.createLinearGradient(0, 418, 0, WORLD_HEIGHT);
+  water.addColorStop(0, "#6f8f78");
+  water.addColorStop(0.22, "#4c7a6a");
+  water.addColorStop(0.6, "#2f5a58");
+  water.addColorStop(1, "#1d3a42");
+  ctx.fillStyle = water;
+  ctx.fillRect(0, 418, WORLD_WIDTH, WORLD_HEIGHT - 418);
+  const glint = ctx.createLinearGradient(700, 0, 1060, 0);
+  glint.addColorStop(0, "rgba(255,214,140,0)");
+  glint.addColorStop(0.5, "rgba(255,214,140,.32)");
+  glint.addColorStop(1, "rgba(255,214,140,0)");
+  ctx.fillStyle = glint;
+  ctx.fillRect(700, 420, 360, 200);
+  for (let band = 0; band < 7; band += 1) {
+    const y = 430 + band * 26;
+    ctx.strokeStyle = band % 2 ? "rgba(200,235,210,.16)" : "rgba(255,220,150,.12)";
+    ctx.lineWidth = band < 2 ? 1.6 : 1.2;
+    ctx.beginPath();
+    for (let x = 0; x <= WORLD_WIDTH; x += 12) {
+      const wave = Math.sin(x * (0.02 + band * 0.002) + elapsed * (1.2 + band * 0.1)) * (2.6 - band * 0.2);
+      if (x === 0) ctx.moveTo(x, y + wave);
+      else ctx.lineTo(x, y + wave);
+    }
+    ctx.stroke();
+  }
+
+  const standing = river.standing;
+  const occupiedHippo = standing && "hippo" in standing ? standing.hippo : null;
+  const occupiedZone = standing && "hippo" in standing ? standing.zone : null;
+  river.hippos.forEach((hippo) => {
+    const baseY = HIPPO_WATER_Y + hippo.bob + hippo.sink * 78;
+    ctx.strokeStyle = "rgba(220,240,225,.28)";
+    ctx.lineWidth = 2;
+    for (let ring = 0; ring < 2; ring += 1) {
+      ctx.beginPath();
+      ctx.ellipse(
+        hippo.x + HIPPO_LENGTH / 2,
+        HIPPO_WATER_Y + 8 + ring * 6,
+        HIPPO_LENGTH * 0.58 + ring * 16 + Math.sin(elapsed * 2 + hippo.id) * 3,
+        7 + ring * 3,
+        0,
+        0,
+        Math.PI * 2,
+      );
+      ctx.stroke();
+    }
+    if (hippo.diver && (hippo.mode === "yawn" || hippo.mode === "submerged" || hippo.mode === "rising")) {
+      ctx.strokeStyle = "rgba(230,245,235,.7)";
+      ctx.lineWidth = 1.4;
+      for (let bubble = 0; bubble < 6; bubble += 1) {
+        const phase = (elapsed * 1.6 + bubble * 0.7) % 1;
+        ctx.beginPath();
+        ctx.arc(hippo.x + 40 + bubble * 24, HIPPO_WATER_Y + 24 - phase * 30, 2 + (bubble % 3), 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+    drawHippo(ctx, hippo, elapsed, occupiedHippo === hippo.id ? occupiedZone : null);
+    void baseY;
+  });
+
+  const surface = ctx.createLinearGradient(0, HIPPO_WATER_Y, 0, WORLD_HEIGHT);
+  surface.addColorStop(0, "rgba(70,120,110,.55)");
+  surface.addColorStop(0.3, "rgba(45,90,90,.8)");
+  surface.addColorStop(1, "rgba(25,55,65,.95)");
+  ctx.fillStyle = surface;
+  ctx.fillRect(0, HIPPO_WATER_Y, WORLD_WIDTH, WORLD_HEIGHT - HIPPO_WATER_Y);
+  ctx.strokeStyle = "rgba(225,245,230,.5)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let x = 0; x <= WORLD_WIDTH; x += 10) {
+    const wave = Math.sin(x * 0.03 + elapsed * 1.8) * 2.2;
+    if (x === 0) ctx.moveTo(x, HIPPO_WATER_Y + wave);
+    else ctx.lineTo(x, HIPPO_WATER_Y + wave);
+  }
+  ctx.stroke();
+
+  const drawBank = (left: number, width: number, side: -1 | 1) => {
+    ctx.fillStyle = "#3a2c22";
+    roundedRect(ctx, left - 6, HIPPO_BANK_Y - 4, width + 12, WORLD_HEIGHT - HIPPO_BANK_Y + 20, 10);
+    ctx.fill();
+    const earth = ctx.createLinearGradient(0, HIPPO_BANK_Y, 0, WORLD_HEIGHT);
+    earth.addColorStop(0, "#8a6a44");
+    earth.addColorStop(0.35, "#5f4630");
+    earth.addColorStop(1, "#2f241d");
+    ctx.fillStyle = earth;
+    roundedRect(ctx, left - 2, HIPPO_BANK_Y, width + 4, WORLD_HEIGHT - HIPPO_BANK_Y + 20, 8);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,220,160,.18)";
+    ctx.lineWidth = 2;
+    for (let layer = 0; layer < 5; layer += 1) {
+      ctx.beginPath();
+      ctx.moveTo(left + 4, HIPPO_BANK_Y + 22 + layer * 28);
+      ctx.lineTo(left + width - 4, HIPPO_BANK_Y + 26 + layer * 28);
+      ctx.stroke();
+    }
+    const grass = ctx.createLinearGradient(0, HIPPO_BANK_Y - 14, 0, HIPPO_BANK_Y + 10);
+    grass.addColorStop(0, "#8fb04c");
+    grass.addColorStop(1, "#4f7a3a");
+    ctx.fillStyle = grass;
+    roundedRect(ctx, left - 4, HIPPO_BANK_Y - 12, width + 8, 24, 10);
+    ctx.fill();
+    for (let x = left + 6; x < left + width - 4; x += 16) {
+      drawLeaf(ctx, x, HIPPO_BANK_Y - 6, 14 + (x % 4), -1.35 + Math.sin(elapsed * 0.9 + x) * 0.05, x % 3 ? "#6f9a44" : "#9bb14a");
+    }
+    const edgeX = side < 0 ? left + width : left;
+    for (let reed = 0; reed < 6; reed += 1) {
+      const rx = edgeX + side * (6 + reed * 9);
+      const sway = Math.sin(elapsed * 1.4 + reed) * 3;
+      ctx.strokeStyle = reed % 2 ? "#5f8a3d" : "#7aa347";
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(rx, HIPPO_WATER_Y + 6);
+      ctx.quadraticCurveTo(rx + sway, HIPPO_WATER_Y - 30, rx + sway * 1.5, HIPPO_WATER_Y - 62 - (reed % 3) * 12);
+      ctx.stroke();
+      ctx.fillStyle = "#6b4b2e";
+      ctx.beginPath();
+      ctx.ellipse(rx + sway * 1.5, HIPPO_WATER_Y - 66 - (reed % 3) * 12, 3, 9, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  };
+  drawBank(-20, HIPPO_BANK_LEFT + 20, -1);
+  drawBank(HIPPO_BANK_RIGHT, WORLD_WIDTH - HIPPO_BANK_RIGHT + 20, 1);
+
+  ctx.fillStyle = "#593b22";
+  roundedRect(ctx, 1122, 330, 15, 110, 4);
+  ctx.fill();
+  ctx.fillStyle = "#e1a644";
+  roundedRect(ctx, 1068, 308, 122, 56, 7);
+  ctx.fill();
+  ctx.strokeStyle = "#8d5529";
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.fillStyle = "#3a281c";
+  ctx.font = "800 15px Arial";
+  ctx.textAlign = "center";
+  ctx.fillText("TRAIL  →", 1129, 342);
+
+  const companion: Character = activeCharacter === "guto" ? "nanda" : "guto";
+  drawCharacter(ctx, 48, HIPPO_BANK_Y, companion, 1, elapsed, player.x > HIPPO_BANK_LEFT ? "wave" : "idle", 0, 0.88);
+  if (player.x > HIPPO_BANK_LEFT && !river.lost && !river.won) {
+    const bubbleY = 318 + Math.sin(elapsed * 2.8) * 2;
+    ctx.fillStyle = "rgba(247,232,186,.92)";
+    roundedRect(ctx, 8, bubbleY, 150, 34, 13);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(44, bubbleY + 31);
+    ctx.lineTo(52, bubbleY + 43);
+    ctx.lineTo(60, bubbleY + 31);
+    ctx.fill();
+    ctx.fillStyle = "#244638";
+    ctx.font = "800 11px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("NOT THE MOUTH!", 83, bubbleY + 21);
+  }
+
+  if (river.lost) {
+    const splashX = river.splashX;
+    drawCharacter(ctx, splashX, HIPPO_SPLASH_Y + 16, activeCharacter, player.facing, elapsed, "fall", 0, 1.08);
+    ctx.fillStyle = "rgba(60,100,105,.85)";
+    ctx.fillRect(splashX - 60, HIPPO_WATER_Y + 2, 120, 60);
+    ctx.strokeStyle = "rgba(235,250,245,.85)";
+    ctx.lineWidth = 3;
+    for (let drop = 0; drop < 7; drop += 1) {
+      const angle = -2.6 + drop * 0.37;
+      const reach = 26 + (drop % 3) * 10;
+      ctx.beginPath();
+      ctx.moveTo(splashX + Math.cos(angle) * 8, HIPPO_WATER_Y + Math.sin(angle) * 4);
+      ctx.lineTo(splashX + Math.cos(angle) * reach, HIPPO_WATER_Y + Math.sin(angle) * reach * 0.8);
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.ellipse(splashX, HIPPO_WATER_Y + 4, 48, 9, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = "#fff2cf";
+    ctx.font = "900 22px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("SPLASH!", splashX, HIPPO_WATER_Y - 40);
+  } else {
+    const playerMotion: CharacterMotion = !player.onGround
+      ? player.vy < 0
+        ? "jump"
+        : "fall"
+      : Math.abs(player.vx) > 24
+        ? "run"
+        : river.chargeHeld > 0
+          ? "carry"
+          : "idle";
+    drawCharacter(ctx, player.x, player.y, activeCharacter, player.facing, elapsed, playerMotion, player.vx, 1.08);
+    if (standing && "hippo" in standing && standing.zone === "mouth") {
+      ctx.fillStyle = "#ff5a45";
+      ctx.font = "900 26px Arial";
+      ctx.textAlign = "center";
+      ctx.fillText("!", player.x, player.y - 112 - Math.abs(Math.sin(elapsed * 12)) * 6);
+    }
+  }
+
+  drawHippoHud(ctx, game);
+
+  if (!game.running && !game.won && !game.lost) {
+    ctx.fillStyle = "rgba(5,29,27,.18)";
+    ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+  }
+}
+
+function snakeMoveForCode(code: string): SnakeMove | null {
+  if (code === "ArrowRight" || code === "KeyD" || code === "Space") return "forward";
+  if (code === "ArrowLeft" || code === "KeyA") return "back";
+  if (code === "ArrowUp" || code === "KeyW") return "up";
+  if (code === "ArrowDown" || code === "KeyS") return "down";
+  return null;
+}
+
+function bandColor(band: SnakeBand) {
+  const hue = 22 + band.tint * 10;
+  const light = 30 + band.tint * 9;
+  return {
+    body: `hsl(${hue} 42% ${light}%)`,
+    dark: `hsl(${hue} 46% ${light - 14}%)`,
+    light: `hsl(${hue + 6} 48% ${light + 16}%)`,
+  };
+}
+
+function drawSnakeBand(
+  ctx: CanvasRenderingContext2D,
+  band: SnakeBand,
+  elapsed: number,
+  awake: boolean,
+  biting: boolean,
+) {
+  const colors = bandColor(band);
+  const wiggle = awake && band.kind === "snake" ? 2.4 : 0;
+  const points = band.cells.map((cell, index) => {
+    const center = cellCenter(cell.col, cell.lane);
+    const phase = elapsed * 16 + band.wobble + index * 1.1;
+    return { x: center.x + Math.sin(phase) * wiggle, y: center.y + Math.cos(phase * 0.8) * wiggle };
+  });
+  const trace = () => {
+    ctx.beginPath();
+    points.forEach((point, index) => {
+      if (index === 0) ctx.moveTo(point.x, point.y);
+      else ctx.lineTo(point.x, point.y);
+    });
+  };
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = "rgba(10,6,3,.35)";
+  ctx.lineWidth = 40;
+  ctx.translate(3, 5);
+  trace();
+  ctx.stroke();
+  ctx.translate(-3, -5);
+  ctx.strokeStyle = "#20150e";
+  ctx.lineWidth = 36;
+  trace();
+  ctx.stroke();
+  ctx.strokeStyle = colors.body;
+  ctx.lineWidth = 29;
+  trace();
+  ctx.stroke();
+  ctx.strokeStyle = colors.light;
+  ctx.lineWidth = 7;
+  ctx.setLineDash([12, 9]);
+  ctx.lineDashOffset = band.wobble * 10;
+  trace();
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.strokeStyle = colors.dark;
+  ctx.lineWidth = 2;
+  for (let index = 0; index < points.length; index += 1) {
+    const point = points[index];
+    const next = points[index + 1] ?? points[index - 1] ?? point;
+    const dx = next.x - point.x;
+    const dy = next.y - point.y;
+    const length = Math.hypot(dx, dy) || 1;
+    const nx = -dy / length;
+    const ny = dx / length;
+    for (let tick = -1; tick <= 1; tick += 1) {
+      const tx = point.x + (dx / length) * tick * 14;
+      const ty = point.y + (dy / length) * tick * 14;
+      ctx.beginPath();
+      ctx.moveTo(tx + nx * 6, ty + ny * 6);
+      ctx.lineTo(tx + nx * 12, ty + ny * 12);
+      ctx.moveTo(tx - nx * 6, ty - ny * 6);
+      ctx.lineTo(tx - nx * 12, ty - ny * 12);
+      ctx.stroke();
+    }
+  }
+  const ends = points.length > 1 ? [points[0], points[points.length - 1]] : [points[0]];
+  ends.forEach((end) => {
+    ctx.fillStyle = "#20150e";
+    ctx.beginPath();
+    ctx.arc(end.x, end.y, 19, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = colors.body;
+    ctx.beginPath();
+    ctx.arc(end.x, end.y, 16, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = colors.dark;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(end.x, end.y, 9, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+
+  if (awake && band.kind === "snake") {
+    ctx.strokeStyle = "rgba(255,226,150,.5)";
+    ctx.lineWidth = 3;
+    ctx.setLineDash([5, 7]);
+    trace();
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const { head, neck } = snakeHead(band);
+    const headPoint = points[band.headAtEnd ? points.length - 1 : 0];
+    const neckCenter = neck ? cellCenter(neck.col, neck.lane) : { x: headPoint.x - 1, y: headPoint.y };
+    const headCenter = cellCenter(head.col, head.lane);
+    const angle = Math.atan2(headPoint.y - neckCenter.y, headPoint.x - neckCenter.x);
+    void headCenter;
+    ctx.save();
+    ctx.translate(headPoint.x, headPoint.y);
+    ctx.rotate(angle);
+    const open = biting ? 0.9 : 0.55 + Math.sin(elapsed * 14 + band.wobble) * 0.15;
+    ctx.fillStyle = "#20150e";
+    ctx.beginPath();
+    ctx.ellipse(6, 0, 26, 19, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = colors.body;
+    ctx.beginPath();
+    ctx.ellipse(6, 0, 23, 16, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#d9556b";
+    ctx.beginPath();
+    ctx.moveTo(10, 0);
+    ctx.lineTo(30, -12 * open);
+    ctx.quadraticCurveTo(34, 0, 30, 12 * open);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#fff6e6";
+    ctx.beginPath();
+    ctx.moveTo(24, -9 * open);
+    ctx.lineTo(27, -2 * open);
+    ctx.lineTo(21, -5 * open);
+    ctx.moveTo(24, 9 * open);
+    ctx.lineTo(27, 2 * open);
+    ctx.lineTo(21, 5 * open);
+    ctx.closePath();
+    ctx.fill();
+    const flick = 22 + Math.sin(elapsed * 26 + band.wobble) * 8;
+    ctx.strokeStyle = "#e0323f";
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(30, 0);
+    ctx.lineTo(30 + flick, 0);
+    ctx.lineTo(30 + flick + 6, -4);
+    ctx.moveTo(30 + flick, 0);
+    ctx.lineTo(30 + flick + 6, 4);
+    ctx.stroke();
+    [-8, 8].forEach((side) => {
+      ctx.fillStyle = "#f5d34a";
+      ctx.beginPath();
+      ctx.ellipse(4, side, 5.5, 4.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#1a120c";
+      ctx.beginPath();
+      ctx.ellipse(5, side, 1.6, 3.6, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#20150e";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(-2, side * 1.6);
+      ctx.lineTo(10, side * 1.1);
+      ctx.stroke();
+    });
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+function drawTopDownCharacter(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  character: Character,
+  facing: SnakeMove,
+  elapsed: number,
+  hop: number,
+  moving: boolean,
+) {
+  const isGuto = character === "guto";
+  const shirt = isGuto ? "#2878c8" : "#dc554d";
+  const shirtDark = isGuto ? "#175196" : "#9d3837";
+  const angle = facing === "forward" ? 0 : facing === "back" ? Math.PI : facing === "up" ? -Math.PI / 2 : Math.PI / 2;
+  const lift = Math.sin(Math.PI * Math.min(1, Math.max(0, hop)));
+  const scale = 1 + lift * 0.38;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = `rgba(5,10,8,${0.32 - lift * 0.18})`;
+  ctx.beginPath();
+  ctx.ellipse(2, 4, 20 - lift * 4, 14 - lift * 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.scale(scale, scale);
+  ctx.rotate(angle);
+  const stride = moving ? Math.sin(elapsed * 22) * 5 : 0;
+  ctx.fillStyle = "#18251f";
+  ctx.beginPath();
+  ctx.ellipse(-6 + stride * 0.3, -10, 5, 7, 0, 0, Math.PI * 2);
+  ctx.ellipse(-6 - stride * 0.3, 10, 5, 7, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#18251f";
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 18, 23, 0, 0, Math.PI * 2);
+  ctx.fill();
+  const shirtGradient = ctx.createLinearGradient(-14, -18, 12, 18);
+  shirtGradient.addColorStop(0, shirt);
+  shirtGradient.addColorStop(1, shirtDark);
+  ctx.fillStyle = shirtGradient;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 15.5, 20.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#d48a55";
+  [-1, 1].forEach((side) => {
+    ctx.beginPath();
+    ctx.arc(4 + stride * side * 0.4, side * 21, 5, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.strokeStyle = "#18251f";
+  ctx.lineWidth = 1.5;
+  [-1, 1].forEach((side) => {
+    ctx.beginPath();
+    ctx.arc(4 + stride * side * 0.4, side * 21, 5, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+  if (!isGuto) {
+    ctx.fillStyle = "#231612";
+    ctx.beginPath();
+    ctx.ellipse(-16, 0, 7, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#d17b37";
+    ctx.beginPath();
+    ctx.arc(-11, 0, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = "#18251f";
+  ctx.beginPath();
+  ctx.arc(2, 0, 15.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#d48a55";
+  ctx.beginPath();
+  ctx.ellipse(12, 0, 6, 8, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#231612";
+  ctx.beginPath();
+  ctx.arc(1, 0, 13.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255,240,210,.22)";
+  ctx.beginPath();
+  ctx.ellipse(-3, -4, 6, 4, -0.4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawSnakeWorld(
+  ctx: CanvasRenderingContext2D,
+  game: GameState,
+  activeCharacter: Character,
+) {
+  const { elapsed } = game;
+  const maze = game.snake;
+  ctx.clearRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+
+  const floor = ctx.createLinearGradient(0, 0, 0, WORLD_HEIGHT);
+  floor.addColorStop(0, "#2a2118");
+  floor.addColorStop(0.5, "#33281c");
+  floor.addColorStop(1, "#211a13");
+  ctx.fillStyle = floor;
+  ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+  for (let leaf = 0; leaf < 70; leaf += 1) {
+    const x = ((leaf * 173 + 31) % (WORLD_WIDTH + 40)) - 20;
+    const y = ((leaf * 97 + 13) % (WORLD_HEIGHT + 40)) - 20;
+    drawLeaf(ctx, x, y, 12 + (leaf % 4) * 4, leaf * 0.9, leaf % 3 === 0 ? "rgba(70,90,40,.35)" : leaf % 3 === 1 ? "rgba(110,80,40,.3)" : "rgba(50,70,35,.3)");
+  }
+
+  const gridWidth = SNAKE_COLS * SNAKE_CELL_W;
+  const gridHeight = SNAKE_LANES * SNAKE_CELL_H;
+  const path = ctx.createLinearGradient(0, SNAKE_GRID_Y, 0, SNAKE_GRID_Y + gridHeight);
+  path.addColorStop(0, "#4a3927");
+  path.addColorStop(1, "#3d2f21");
+  ctx.fillStyle = path;
+  roundedRect(ctx, SNAKE_GRID_X - 8, SNAKE_GRID_Y - 10, gridWidth + 16, gridHeight + 20, 14);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,230,180,.08)";
+  ctx.lineWidth = 1;
+  for (let col = 1; col < SNAKE_COLS; col += 1) {
+    const x = SNAKE_GRID_X + col * SNAKE_CELL_W;
+    ctx.beginPath();
+    ctx.setLineDash([4, 8]);
+    ctx.moveTo(x, SNAKE_GRID_Y);
+    ctx.lineTo(x, SNAKE_GRID_Y + gridHeight);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  ctx.fillStyle = "rgba(255,230,180,.26)";
+  ctx.font = "900 9px Arial";
+  ctx.textAlign = "center";
+  for (let col = 0; col < SNAKE_COLS; col += 1) {
+    if (col % 5 !== 4 && col !== 0) continue;
+    ctx.fillText(String(col + 1), SNAKE_GRID_X + col * SNAKE_CELL_W + SNAKE_CELL_W / 2, SNAKE_GRID_Y + gridHeight + 16);
+  }
+  for (let pebble = 0; pebble < 40; pebble += 1) {
+    ctx.fillStyle = pebble % 2 ? "rgba(120,100,80,.35)" : "rgba(90,75,60,.4)";
+    ctx.beginPath();
+    ctx.ellipse(SNAKE_GRID_X + ((pebble * 211) % gridWidth), SNAKE_GRID_Y + ((pebble * 131) % gridHeight), 4 + (pebble % 3), 2.5, pebble, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const drawBank = (left: number, width: number) => {
+    ctx.fillStyle = "#1d1711";
+    roundedRect(ctx, left - 4, SNAKE_GRID_Y - 24, width + 8, gridHeight + 48, 12);
+    ctx.fill();
+    const stone = ctx.createLinearGradient(left, 0, left + width, 0);
+    stone.addColorStop(0, "#77705f");
+    stone.addColorStop(0.5, "#8d8571");
+    stone.addColorStop(1, "#6e6758");
+    ctx.fillStyle = stone;
+    roundedRect(ctx, left, SNAKE_GRID_Y - 20, width, gridHeight + 40, 10);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(30,25,18,.4)";
+    ctx.lineWidth = 2;
+    for (let line = 0; line < 14; line += 1) {
+      const y = SNAKE_GRID_Y - 10 + line * 40;
+      ctx.beginPath();
+      ctx.moveTo(left + 6, y + 26);
+      ctx.lineTo(left + width - 6, y - 4);
+      ctx.stroke();
+    }
+    for (let tuft = 0; tuft < 9; tuft += 1) {
+      drawLeaf(ctx, left + 8 + ((tuft * 37) % (width - 16)), SNAKE_GRID_Y - 12 + tuft * 60, 16, tuft * 1.3 + Math.sin(elapsed + tuft) * 0.05, tuft % 2 ? "#4f8a3f" : "#6ea34a");
+    }
+  };
+  drawBank(0, SNAKE_GRID_X - 6);
+  drawBank(SNAKE_GRID_X + gridWidth + 6, WORLD_WIDTH - SNAKE_GRID_X - gridWidth - 6);
+
+  ctx.fillStyle = "#e1a644";
+  roundedRect(ctx, 1108, 20, 78, 22, 5);
+  ctx.fill();
+  ctx.strokeStyle = "#8d5529";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.fillStyle = "#3a281c";
+  ctx.font = "800 11px Arial";
+  ctx.textAlign = "center";
+  ctx.fillText("TRAIL →", 1147, 35);
+
+  const biter = maze.lost ? maze.biterBand : null;
+  maze.bands.forEach((band) => {
+    if (band.kind === "root") drawSnakeBand(ctx, band, elapsed, false, false);
+  });
+  const awakeNow = maze.awake || maze.lost;
+  maze.bands.forEach((band) => {
+    if (band.kind === "snake") drawSnakeBand(ctx, band, elapsed, awakeNow, biter === band.id);
+  });
+
+  const companion: Character = activeCharacter === "guto" ? "nanda" : "guto";
+  const companionSpot = cellCenter(-1, 4);
+  drawTopDownCharacter(ctx, companionSpot.x, companionSpot.y + 30, companion, "forward", elapsed, 0, false);
+
+  const position = playerPosition(maze);
+  const hop = maze.motion && maze.motion.hop ? maze.motion.t : 0;
+  if (maze.lost) {
+    ctx.fillStyle = "#ff5a45";
+    ctx.font = "900 22px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("BITTEN!", position.x, position.y - 44);
+  }
+  drawTopDownCharacter(ctx, position.x, position.y, activeCharacter, maze.facing, elapsed, hop, maze.motion !== null && !maze.motion.hop);
+
+  if (maze.awake && !maze.lost) {
+    const fraction = Math.max(0, maze.biteTimer / SNAKE_BITE_DELAY);
+    ctx.fillStyle = "rgba(68,24,18,.9)";
+    roundedRect(ctx, position.x - 44, position.y - 64, 88, 16, 6);
+    ctx.fill();
+    ctx.fillStyle = "#ff765f";
+    roundedRect(ctx, position.x - 40, position.y - 60, Math.max(3, 80 * fraction), 8, 4);
+    ctx.fill();
+  }
+  if (!maze.awake && !maze.lost && !maze.motion && maze.col >= 0 && maze.col < SNAKE_COLS) {
+    const band = bandAt(maze, maze.col, maze.lane);
+    if (band) {
+      ctx.strokeStyle = "rgba(180,236,109,.55)";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 5]);
+      ctx.beginPath();
+      ctx.ellipse(position.x, position.y + 4, 24, 17, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+
+  ctx.fillStyle = "rgba(20,44,30,.86)";
+  roundedRect(ctx, 18, 12, 170, 36, 10);
+  ctx.fill();
+  ctx.fillStyle = "#fff2cf";
+  ctx.font = "900 12px Arial";
+  ctx.textAlign = "left";
+  ctx.fillText(`ROW ${Math.min(SNAKE_COLS, Math.max(0, maze.col + 1))} / ${SNAKE_COLS}`, 32, 35);
+  ctx.fillStyle = "rgba(255,242,207,.7)";
+  ctx.font = "900 9px Arial";
+  ctx.fillText(`PEEKS ${maze.reveals}`, 128, 35);
+
+  ctx.fillStyle = "rgba(20,44,30,.86)";
+  roundedRect(ctx, WORLD_WIDTH - 18 - 330, 12, 330, 36, 10);
+  ctx.fill();
+  ctx.fillStyle = "#fff2cf";
+  ctx.font = "900 11px Arial";
+  ctx.textAlign = "left";
+  ctx.fillText("←→ hop a row · ↑↓ walk the root · snakes bite in a blink", WORLD_WIDTH - 18 - 316, 35);
+
+  if (maze.awake && !maze.lost) {
+    const pulse = (Math.sin(elapsed * 14) + 1) / 2;
+    ctx.fillStyle = `rgba(150,30,22,${0.75 + pulse * 0.2})`;
+    roundedRect(ctx, 470, 10, 260, 38, 10);
+    ctx.fill();
+    ctx.strokeStyle = "#ffb08a";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = "#fff2cf";
+    ctx.font = "900 14px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("SNAKES AWAKE — HOP OFF!", 600, 35);
+  } else if (game.noticeTimer > 0 && game.notice) {
+    const fade = Math.min(1, game.noticeTimer / 0.4);
+    ctx.fillStyle = `rgba(20,44,30,${0.82 * fade})`;
+    roundedRect(ctx, 470, 10, 260, 38, 10);
+    ctx.fill();
+    ctx.fillStyle = `rgba(255,242,207,${fade})`;
+    ctx.font = "900 12px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText(game.notice, 600, 34);
+  }
+
+  if (!game.running && !game.won && !game.lost) {
+    ctx.fillStyle = "rgba(5,29,27,.18)";
+    ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+  }
+}
+
 export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<GameState>(makeGame(1));
@@ -1828,10 +3831,23 @@ export default function Home() {
   const [activeCourse, setActiveCourse] = useState<CourseNumber>(1);
   const [soundOn, setSoundOn] = useState(true);
   const [courseStatus, setCourseStatus] = useState("Jump first, then hold Z");
+  const [eagleLoss, setEagleLoss] = useState<EagleLossReason | null>(null);
+  const [hippoLoss, setHippoLoss] = useState<HippoLossReason | null>(null);
+  const [snakeLoss, setSnakeLoss] = useState<SnakeLossReason | null>(null);
+  const snakeSeedRef = useRef(0);
 
   useEffect(() => {
     soundEnabledRef.current = soundOn;
   }, [soundOn]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    const debugWindow = window as Window & { __goldenPumpkinDebug?: { getGame: () => GameState } };
+    debugWindow.__goldenPumpkinDebug = { getGame: () => gameRef.current };
+    return () => {
+      delete debugWindow.__goldenPumpkinDebug;
+    };
+  }, []);
 
   useEffect(() => {
     document.body.style.overflow = showTitleScreen ? "hidden" : "";
@@ -1869,13 +3885,22 @@ export default function Home() {
   );
 
   const resetGame = useCallback(() => {
-    const fresh = makeGame(activeCourse);
+    if (!snakeSeedRef.current) snakeSeedRef.current = Math.floor(Math.random() * 1e6) + 1;
+    const fresh = makeGame(activeCourse, snakeSeedRef.current);
     fresh.running = true;
     gameRef.current = fresh;
+    setEagleLoss(null);
+    setHippoLoss(null);
+    setSnakeLoss(null);
     setCourseStatus(
-      activeCourse === 1
-        ? "Jump first, then hold Z"
-        : "Reach the far side — stomp monkeys to stun them",
+      byCourse(
+        activeCourse,
+        "Jump first, then hold Z",
+        "Reach the far side — stomp monkeys to stun them",
+        "Grab a rodent with SPACE, then cross the clearing",
+        "Walk to the edge — SPACE hops, hold Z + SPACE leaps",
+        "Hop forward with → — roots are safe, snakes are not",
+      ),
     );
   }, [activeCourse]);
 
@@ -1909,11 +3934,20 @@ export default function Home() {
     setActiveCourse(course);
     setHasStarted(false);
     setOverlay("briefing");
-    gameRef.current = makeGame(course);
+    snakeSeedRef.current = Math.floor(Math.random() * 1e6) + 1;
+    gameRef.current = makeGame(course, snakeSeedRef.current);
+    setEagleLoss(null);
+    setHippoLoss(null);
+    setSnakeLoss(null);
     setCourseStatus(
-      course === 1
-        ? "Jump first, then hold Z"
-        : "Reach the far side — stomp monkeys to stun them",
+      byCourse(
+        course,
+        "Jump first, then hold Z",
+        "Reach the far side — stomp monkeys to stun them",
+        "Grab a rodent with SPACE, then cross the clearing",
+        "Walk to the edge — SPACE hops, hold Z + SPACE leaps",
+        "Hop forward with → — roots are safe, snakes are not",
+      ),
     );
     window.setTimeout(() => {
       document.querySelector("#game")?.scrollIntoView({ behavior: "smooth" });
@@ -2073,7 +4107,7 @@ export default function Home() {
                   : "No grab after a drop — land and jump again",
           );
         }
-        } else {
+        } else if (game.course === 2) {
           const previousX = player.x;
           const previousY = player.y;
           const previousPlatform = player.onPlatform;
@@ -2315,13 +4349,348 @@ export default function Home() {
                           : "Cross all four trees and avoid the spikes",
             );
           }
+        } else if (game.course === 3) {
+          const field = game.eagle;
+          const events = stepEagleCourse(
+            field,
+            player,
+            { move, run: running, hold: grabbing },
+            dt,
+          );
+          game.noticeTimer = Math.max(0, game.noticeTimer - dt);
+          const notify = (text: string, seconds = 2.2) => {
+            game.notice = text;
+            game.noticeTimer = seconds;
+          };
+          events.forEach((event: EagleEvent) => {
+            switch (event.type) {
+              case "pickup":
+                if (event.item === "rodent") {
+                  setCourseStatus("Got a rodent! Hold Z to raise it when an eagle dives");
+                  playTone(620, 0.08, "triangle");
+                  window.setTimeout(() => playTone(1180, 0.05, "square"), 60);
+                } else {
+                  setCourseStatus("That’s fruit — eagles hate it. Hold Z to eat, SPACE to drop");
+                  playTone(520, 0.08, "triangle");
+                }
+                break;
+              case "drop":
+                setCourseStatus(event.item === "rodent" ? "The rodent scurried off" : "Fruit dropped");
+                playTone(300, 0.06, "triangle");
+                break;
+              case "reachMiss":
+                setCourseStatus("Nothing in reach — stand next to a rodent and press SPACE");
+                playTone(240, 0.05, "square");
+                break;
+              case "eat":
+                setCourseStatus("Yum! Health restored a little");
+                notify("+15 HEALTH");
+                playTone(330, 0.08, "triangle");
+                window.setTimeout(() => playTone(494, 0.1, "triangle"), 90);
+                break;
+              case "lock":
+                if (event.onPlayer) {
+                  setCourseStatus("EAGLE LOCKED ON — raise a rodent with Z!");
+                  playTone(1500, 0.16, "sawtooth");
+                  window.setTimeout(() => playTone(1180, 0.14, "sawtooth"), 90);
+                }
+                break;
+              case "dive":
+                if (event.onPlayer) {
+                  setCourseStatus("DIVE INCOMING!");
+                  playTone(220, 0.24, "sawtooth");
+                }
+                break;
+              case "preyTaken":
+                setCourseStatus("The eagle took the rodent — grab another and keep moving!");
+                notify("FED THE EAGLE!");
+                playTone(880, 0.1, "triangle");
+                window.setTimeout(() => playTone(1400, 0.06, "square"), 70);
+                break;
+              case "rodentHunted":
+                setCourseStatus("An eagle snatched a rodent from the field");
+                playTone(1300, 0.05, "square");
+                break;
+              case "caught":
+                setCourseStatus("CAUGHT! Mash SPACE to break free!");
+                playTone(130, 0.4, "sawtooth");
+                break;
+              case "struggle":
+                playTone(480, 0.03, "square");
+                break;
+              case "escaped":
+                setCourseStatus("Free! Brace for landing");
+                notify("BROKE FREE!");
+                playTone(700, 0.12, "triangle");
+                break;
+              case "landed":
+                setCourseStatus("Shake it off — find a rodent");
+                playTone(200, 0.06, "square");
+                break;
+              case "miss":
+                setCourseStatus("The eagle missed — keep moving!");
+                playTone(300, 0.08, "triangle");
+                break;
+              case "thirdEagle":
+                notify("A THIRD EAGLE JOINS THE HUNT!", 2.6);
+                setCourseStatus("A third eagle joins the hunt!");
+                playTone(1600, 0.2, "sawtooth");
+                window.setTimeout(() => playTone(1250, 0.18, "sawtooth"), 110);
+                break;
+              case "won":
+                game.running = false;
+                game.won = true;
+                setOverlay("won");
+                setCourseStatus("Course clear!");
+                playTone(784, 0.16, "triangle");
+                window.setTimeout(() => playTone(1046, 0.22, "triangle"), 120);
+                break;
+              case "lost":
+                game.running = false;
+                game.lost = true;
+                setEagleLoss(event.reason);
+                setOverlay("gameover");
+                setCourseStatus(
+                  event.reason === "carried"
+                    ? "The eagle carried you off"
+                    : "The talons wore you down",
+                );
+                playTone(105, 0.42, "sawtooth");
+                break;
+            }
+          });
+
+          statusTimer += dt;
+          if (statusTimer > 0.6 && events.length === 0 && !game.won && !game.lost) {
+            statusTimer = 0;
+            const threat = threateningEagle(field);
+            setCourseStatus(
+              field.caughtBy !== null
+                ? `MASH SPACE! ${Math.max(0, EAGLE_HOLD_LIMIT - field.holdTime).toFixed(1)}s left`
+                : threat
+                  ? field.carrying?.kind === "rodent"
+                    ? field.overhead
+                      ? "Rodent raised — hold still, the eagle will take it"
+                      : "EAGLE DIVING — hold Z to raise the rodent!"
+                    : "EAGLE DIVING — no rodent? Run for it!"
+                  : player.x <= EAGLE_SAFE_LEFT
+                    ? "Safe in the shade — grab a rodent, then cross"
+                    : player.x >= EAGLE_SAFE_RIGHT
+                      ? "Under the trees — the trail is right there!"
+                      : field.carrying?.kind === "rodent"
+                        ? "Rodent ready — hold Z the moment an eagle dives"
+                        : field.carrying?.kind === "fruit"
+                          ? "Fruit: hold Z to eat, or SPACE to drop it"
+                          : "Find a rodent — press SPACE next to one",
+            );
+          }
+        } else if (game.course === 4) {
+          const river = game.hippo;
+          const events = stepHippoCourse(river, player, { move, hold: grabbing }, dt);
+          game.noticeTimer = Math.max(0, game.noticeTimer - dt);
+          const notify = (text: string, seconds = 1.8) => {
+            game.notice = text;
+            game.noticeTimer = seconds;
+          };
+          events.forEach((event: HippoEvent) => {
+            switch (event.type) {
+              case "jump":
+                if (event.kind === "long") {
+                  setCourseStatus(
+                    event.charge >= 0.98 && event.charge <= 1.05
+                      ? "Long jump — perfectly charged!"
+                      : event.charge > 1.05
+                        ? "Long jump — overcharged, hold on!"
+                        : "Long jump — a little under-charged",
+                  );
+                  playTone(380, 0.08, "square");
+                  window.setTimeout(() => playTone(560, 0.1, "square"), 70);
+                } else {
+                  setCourseStatus("Short hop!");
+                  playTone(330, 0.07, "square");
+                }
+                break;
+              case "land":
+                if (event.zone === "back") {
+                  setCourseStatus("On the back — breathe, then hold Z and SPACE to leap");
+                  playTone(260, 0.08, "triangle");
+                } else if (event.zone === "head") {
+                  setCourseStatus("On the head — hop to the back NOW!");
+                  playTone(520, 0.06, "square");
+                } else {
+                  setCourseStatus("Uh oh — that’s the mouth!");
+                }
+                break;
+              case "chomp":
+                notify("CHOMP!", 1.2);
+                playTone(110, 0.32, "sawtooth");
+                break;
+              case "warn":
+                if (event.kind === "back") {
+                  setCourseStatus("The hippo is getting restless — jump!");
+                  playTone(180, 0.14, "sawtooth");
+                } else if (event.kind === "head") {
+                  setCourseStatus("It’s about to shake — hop!");
+                  playTone(700, 0.05, "square");
+                } else {
+                  setCourseStatus("Bubbles! That hippo is about to dive");
+                  playTone(240, 0.1, "triangle");
+                }
+                break;
+              case "submerge":
+                setCourseStatus("The hippo went under — wait for it to surface");
+                playTone(150, 0.2, "triangle");
+                break;
+              case "surface":
+                setCourseStatus("It’s back up — go!");
+                playTone(420, 0.1, "triangle");
+                break;
+              case "chargeFull":
+                notify("LONG JUMP READY", 0.9);
+                playTone(880, 0.06, "triangle");
+                break;
+              case "overcharge":
+                setCourseStatus("Too much charge — you’ll overshoot!");
+                playTone(200, 0.1, "sawtooth");
+                break;
+              case "bank":
+                playTone(300, 0.08, "triangle");
+                break;
+              case "won":
+                game.running = false;
+                game.won = true;
+                setOverlay("won");
+                setCourseStatus("Course clear!");
+                playTone(784, 0.16, "triangle");
+                window.setTimeout(() => playTone(1046, 0.22, "triangle"), 120);
+                break;
+              case "lost":
+                game.running = false;
+                game.lost = true;
+                setHippoLoss(event.reason);
+                setOverlay("gameover");
+                setCourseStatus(
+                  event.reason === "mouth"
+                    ? "The hippo opened wide"
+                    : event.reason === "shake"
+                      ? "Shaken off the head"
+                      : event.reason === "dive"
+                        ? "The hippo dove"
+                        : "Splash!",
+                );
+                playTone(105, 0.42, "sawtooth");
+                break;
+            }
+          });
+
+          statusTimer += dt;
+          if (statusTimer > 0.5 && events.length === 0 && !game.won && !game.lost) {
+            statusTimer = 0;
+            const standing = river.standing;
+            if (!player.onGround) {
+              setCourseStatus(river.lastJump === "long" ? "Leaping…" : "Hopping…");
+            } else if (standing && "bank" in standing) {
+              setCourseStatus(
+                river.chargeHeld > 0
+                  ? river.charge >= 1
+                    ? "Charged — press SPACE to leap to the first back"
+                    : "Charging the long jump…"
+                  : "Walk to the edge — SPACE hops, hold Z + SPACE leaps",
+              );
+            } else if (standing && "hippo" in standing) {
+              const hippo = river.hippos[standing.hippo];
+              if (standing.zone === "back") {
+                const left = Math.max(0, zoneLimit("back", hippo) - river.backTime);
+                setCourseStatus(
+                  river.chargeHeld > 0
+                    ? river.charge >= 1
+                      ? `Charged — SPACE now! ${left.toFixed(1)}s left`
+                      : `Charging… ${left.toFixed(1)}s before it dives`
+                    : `Back: ${left.toFixed(1)}s before it dives — walk to the rear or charge Z`,
+                );
+              } else if (standing.zone === "head") {
+                setCourseStatus("Head! Hop NOW");
+              }
+            }
+          }
+        } else {
+          const maze = game.snake;
+          const events = stepSnakeCourse(maze, dt);
+          game.noticeTimer = Math.max(0, game.noticeTimer - dt);
+          const position = playerPosition(maze);
+          player.x = position.x;
+          player.y = position.y;
+          events.forEach((event: SnakeEvent) => {
+            switch (event.type) {
+              case "hop":
+                playTone(event.toCol > maze.col ? 360 : 300, 0.05, "square");
+                break;
+              case "walk":
+                playTone(240, 0.03, "triangle");
+                break;
+              case "blocked":
+                setCourseStatus(
+                  event.move === "up" || event.move === "down"
+                    ? "The root doesn’t go that way — only hop forward or back"
+                    : "Can’t go that way",
+                );
+                playTone(160, 0.05, "square");
+                break;
+              case "wake":
+                setCourseStatus("SNAKES AWAKE — hop to a root or back, NOW!");
+                game.notice = "HISSSS!";
+                game.noticeTimer = SNAKE_BITE_DELAY;
+                playTone(1900, 0.18, "sawtooth");
+                window.setTimeout(() => playTone(1500, 0.16, "sawtooth"), 60);
+                break;
+              case "sleep":
+                setCourseStatus("Safe — the snakes are asleep again. Remember what you saw!");
+                playTone(420, 0.08, "triangle");
+                break;
+              case "bank":
+                if (!maze.won) setCourseStatus("Back on the bank — pick a lane and hop in");
+                break;
+              case "won":
+                game.running = false;
+                game.won = true;
+                setOverlay("won");
+                setCourseStatus("Course clear!");
+                playTone(784, 0.16, "triangle");
+                window.setTimeout(() => playTone(1046, 0.22, "triangle"), 120);
+                break;
+              case "lost":
+                game.running = false;
+                game.lost = true;
+                setSnakeLoss(event.reason);
+                setOverlay("gameover");
+                setCourseStatus(event.reason === "instant" ? "Bitten by an awake snake" : "Bitten — too slow");
+                playTone(105, 0.42, "sawtooth");
+                break;
+            }
+          });
+
+          statusTimer += dt;
+          if (statusTimer > 0.6 && events.length === 0 && !game.won && !game.lost) {
+            statusTimer = 0;
+            const row = Math.max(0, maze.col + 1);
+            setCourseStatus(
+              maze.awake
+                ? `SNAKES AWAKE — ${Math.max(0, maze.biteTimer).toFixed(1)}s to hop off!`
+                : maze.col < 0
+                  ? "On the bank — ↑↓ pick a lane, → hops onto row 1"
+                  : `Row ${row} / ${SNAKE_COLS} — on a root · ↑↓ walk it, → hops the next row`,
+            );
+          }
         }
       } else {
         game.elapsed += dt * 0.35;
       }
 
       if (game.course === 1) drawWorld(context, game, activeCharacter);
-      else drawMonkeyWorld(context, game, activeCharacter);
+      else if (game.course === 2) drawMonkeyWorld(context, game, activeCharacter);
+      else if (game.course === 3) drawEagleWorld(context, game, activeCharacter);
+      else if (game.course === 4) drawHippoWorld(context, game, activeCharacter);
+      else drawSnakeWorld(context, game, activeCharacter);
       animationFrame = window.requestAnimationFrame(update);
     };
 
@@ -2347,9 +4716,22 @@ export default function Home() {
       if (gameKeys.includes(event.code)) event.preventDefault();
 
       const game = gameRef.current;
+      if (game.course === 5) {
+        if (!event.repeat && game.running) {
+          const move = snakeMoveForCode(event.code);
+          if (move) game.snake.pendingMove = move;
+        }
+        keysRef.current.add(event.code);
+        return;
+      }
       if (event.code === "Space" && !event.repeat && game.running) {
         const player = game.player;
-        if (game.course === 2 && player.onGround) {
+        if (game.course === 3) {
+          game.eagle.spacePresses += 1;
+        } else if (game.course === 4) {
+          game.hippo.jumpPresses += 1;
+          game.hippo.jumpWithHold = keysRef.current.has("KeyZ");
+        } else if (game.course === 2 && player.onGround) {
           player.vy = -515;
           player.onGround = false;
           player.onPlatform = null;
@@ -2395,6 +4777,13 @@ export default function Home() {
   }, [playTone]);
 
   const pressControl = (code: string) => {
+    const game = gameRef.current;
+    if (game.course === 5) {
+      const move = snakeMoveForCode(code);
+      if (move && game.running) game.snake.pendingMove = move;
+      canvasRef.current?.focus();
+      return;
+    }
     keysRef.current.add(code);
     canvasRef.current?.focus();
   };
@@ -2407,7 +4796,14 @@ export default function Home() {
     const game = gameRef.current;
     if (!game.running) return;
     const player = game.player;
-    if (game.course === 2 && player.onGround) {
+    if (game.course === 5) {
+      game.snake.pendingMove = "forward";
+    } else if (game.course === 3) {
+      game.eagle.spacePresses += 1;
+    } else if (game.course === 4) {
+      game.hippo.jumpPresses += 1;
+      game.hippo.jumpWithHold = keysRef.current.has("KeyZ");
+    } else if (game.course === 2 && player.onGround) {
       player.vy = -515;
       player.onGround = false;
       player.onPlatform = null;
@@ -2466,7 +4862,7 @@ export default function Home() {
               <span>ENTER THE JUNGLE</span>
               <span aria-hidden="true">→</span>
             </button>
-            <small>COURSES 01–02 READY · TWO JUNGLE CHALLENGES</small>
+            <small>COURSES 01–05 READY · FIVE JUNGLE CHALLENGES</small>
           </div>
         </section>
       )}
@@ -2531,28 +4927,65 @@ export default function Home() {
               onClick={() => selectCourse(2)}
               type="button"
             >02 · MONKEYS</button>
+            <button
+              className={activeCourse === 3 ? "selected" : ""}
+              onClick={() => selectCourse(3)}
+              type="button"
+            >03 · EAGLES</button>
+            <button
+              className={activeCourse === 4 ? "selected" : ""}
+              onClick={() => selectCourse(4)}
+              type="button"
+            >04 · HIPPOS</button>
+            <button
+              className={activeCourse === 5 ? "selected" : ""}
+              onClick={() => selectCourse(5)}
+              type="button"
+            >05 · SNAKES</button>
           </div>
           <p className="eyebrow">
-            {activeCourse === 1
-              ? "COURSE 01 · CROCODILE TERRITORY"
-              : "COURSE 02 · CAPUCHIN CANOPY"}
+            {byCourse(
+              activeCourse,
+              "COURSE 01 · CROCODILE TERRITORY",
+              "COURSE 02 · CAPUCHIN CANOPY",
+              "COURSE 03 · EAGLE CLEARING",
+              "COURSE 04 · HIPPO RIVER",
+              "COURSE 05 · SLEEPING SNAKES",
+            )}
           </p>
           <h1>
-            {activeCourse === 1
-              ? "The Crocodile Canal"
-              : "The Pushing Monkeys"}
+            {byCourse(
+              activeCourse,
+              "The Crocodile Canal",
+              "The Pushing Monkeys",
+              "The Diving Eagles",
+              "The Hippo Crossing",
+              "The Sleeping Snakes",
+            )}
           </h1>
         </div>
         <p className="intro-copy">
-          {activeCourse === 1
-            ? "The trail disappears beneath the water. Time the swing, trust your partner, and don’t look down."
-            : "Four ancient trees guard the trail. Climb over both barriers, dodge the capuchins, and keep total spike damage below one second."}
+          {byCourse(
+            activeCourse,
+            "The trail disappears beneath the water. Time the swing, trust your partner, and don’t look down.",
+            "Four ancient trees guard the trail. Climb over both barriers, dodge the capuchins, and keep total spike damage below one second.",
+            "A sunny clearing with no cover. Three hawk-eagles circle above, so carry a rodent, raise it when they dive, and never stop moving.",
+            "Four hippos wallow between the banks. Every part of a hippo is a landing spot, but only the back forgives a pause — and one hippo likes to dive.",
+            "Seen from above, the forest floor is a tangle of roots and sleeping vipers that look exactly alike. Hop one row at a time, wake them on purpose, and remember what you saw.",
+          )}
         </p>
       </section>
 
       <section
         className="game-shell"
-        aria-label={activeCourse === 1 ? "The Crocodile Canal game" : "The Pushing Monkeys game"}
+        aria-label={byCourse(
+          activeCourse,
+          "The Crocodile Canal game",
+          "The Pushing Monkeys game",
+          "The Diving Eagles game",
+          "The Hippo Crossing game",
+          "The Sleeping Snakes game",
+        )}
       >
         <div className="game-hud">
           <div className="hud-item">
@@ -2576,11 +5009,14 @@ export default function Home() {
             width={WORLD_WIDTH}
             height={WORLD_HEIGHT}
             tabIndex={0}
-            aria-label={
-              activeCourse === 1
-                ? "A side-scrolling jungle course. Cross the crocodile-filled canal by jumping and grabbing three swinging vines."
-                : "A side-scrolling treetop course. Cross four layered trees and two barriers before cumulative spike damage reaches one second."
-            }
+            aria-label={byCourse(
+              activeCourse,
+              "A side-scrolling jungle course. Cross the crocodile-filled canal by jumping and grabbing three swinging vines.",
+              "A side-scrolling treetop course. Cross four layered trees and two barriers before cumulative spike damage reaches one second.",
+              "A side-scrolling clearing course. Cross an open meadow while three eagles dive, raising rodents overhead as shields and mashing free if caught.",
+              "A side-scrolling river course. Hop across four hippos using short hops and charged long jumps, landing on heads and backs but never in a mouth.",
+              "A top-down maze course. Hop across twenty rows of roots and sleeping snakes that look identical, waking snakes briefly to memorize a safe path.",
+            )}
           />
 
           {overlay === "briefing" && (
@@ -2589,7 +5025,14 @@ export default function Home() {
                 <div className="briefing-topline">
                   <span>FIELD BRIEFING · 0{activeCourse}</span>
                   <span className="danger-label">
-                    {activeCourse === 1 ? "● CROCODILES ACTIVE" : "● MONKEY PATROLS ACTIVE"}
+                    {byCourse(
+                      activeCourse,
+                      "● CROCODILES ACTIVE",
+                      "● MONKEY PATROLS ACTIVE",
+                      "● EAGLES CIRCLING",
+                      "● HIPPOS RESTLESS",
+                      "● SNAKES SLEEPING",
+                    )}
                   </span>
                 </div>
                 <div className="briefing-grid">
@@ -2598,8 +5041,14 @@ export default function Home() {
                     <h2 id="briefing-title">
                       {activeCourse === 1 ? (
                         <>Swing across.<br />Stay out of the water.</>
-                      ) : (
+                      ) : activeCourse === 2 ? (
                         <>Climb all four trees.<br />Don’t get pushed.</>
+                      ) : activeCourse === 3 ? (
+                        <>Cross the clearing.<br />Feed the eagles, not yourself.</>
+                      ) : activeCourse === 4 ? (
+                        <>Hop the river.<br />Never land in a mouth.</>
+                      ) : (
+                        <>Cross twenty rows.<br />Remember the snakes.</>
                       )}
                     </h2>
                     <p>
@@ -2607,10 +5056,25 @@ export default function Home() {
                         <>Wait for a vine to sweep close, <strong>jump first</strong>, then
                         hold <strong>Z</strong> to catch any part of the rope. Keep Z
                         pressed, climb with ↑↓, and jump before catching the next vine.</>
-                      ) : (
+                      ) : activeCourse === 2 ? (
                         <>Jump from branch to branch across the four tall trees. Monkeys
                         chase you on their layer and will <strong>push you toward the spikes</strong>.
                         Land on a monkey’s head to leave it dizzy long enough to escape.</>
+                      ) : activeCourse === 3 ? (
+                        <>Pick up a rodent with <strong>SPACE</strong>. When an eagle locks on,
+                        hold <strong>Z</strong> to raise it overhead so the eagle takes the rodent
+                        instead of you. If talons grab you, <strong>mash SPACE</strong> — three
+                        seconds in the air and you’re gone.</>
+                      ) : activeCourse === 4 ? (
+                        <>Each hippo has a <strong>mouth</strong> (it opens at once), a{" "}
+                        <strong>head</strong> (leave in under a second), and a <strong>back</strong>{" "}
+                        (rest a moment, then go). <strong>SPACE</strong> hops a short arc; hold{" "}
+                        <strong>Z</strong> to charge, then SPACE to leap straight to the next back.</>
+                      ) : (
+                        <>From above, roots and sleeping snakes look the same. Hop forward one row
+                        with <strong>→</strong>. Land on a snake and <strong>every snake wakes</strong>{" "}
+                        for a moment — hop to a root (or straight back) before it bites. Roots are
+                        safe forever: walk along them with <strong>↑↓</strong> to line up the next hop.</>
                       )}
                     </p>
 
@@ -2645,17 +5109,17 @@ export default function Home() {
                   <div className="control-panel">
                     <p className="eyebrow">CONTROLS</p>
                     <div className="control-row">
-                      <span className="key-pair"><kbd>←→</kbd>{activeCourse === 1 && <kbd>↑↓</kbd>}</span>
+                      <span className="key-pair"><kbd>←→</kbd>{(activeCourse === 1 || activeCourse === 5) && <kbd>↑↓</kbd>}</span>
                       <span>
-                        <b>{activeCourse === 1 ? "Move / climb" : "Move / steer"}</b>
-                        <small>{activeCourse === 1 ? "Steer in air, climb on a vine" : "Control every jump in the air"}</small>
+                        <b>{byCourse(activeCourse, "Move / climb", "Move / steer", "Move", "Walk", "Hop a row")}</b>
+                        <small>{byCourse(activeCourse, "Steer in air, climb on a vine", "Control every jump in the air", "Walk the clearing, chase rodents", "Position yourself on a back or the bank edge", "Forward or back, onto whatever is there")}</small>
                       </span>
                     </div>
                     <div className="control-row">
                       <span className="wide-key"><kbd>SPACE</kbd></span>
                       <span>
-                        <b>{activeCourse === 1 ? "Jump / release" : "Jump / stomp"}</b>
-                        <small>{activeCourse === 1 ? "Leap at the swing’s edge" : "Land on monkeys to make them dizzy"}</small>
+                        <b>{byCourse(activeCourse, "Jump / release", "Jump / stomp", "Grab / drop / struggle", "Short hop", "Hop forward")}</b>
+                        <small>{byCourse(activeCourse, "Leap at the swing’s edge", "Land on monkeys to make them dizzy", "Pick up what’s nearest; mash to break free", "Bank → mouth or head · head → back · back → next head", "Same as →, one row at a time")}</small>
                       </span>
                     </div>
                     {activeCourse === 1 && (
@@ -2664,17 +5128,42 @@ export default function Home() {
                         <span><b>Grab &amp; keep holding</b><small>Release Z and you fall</small></span>
                       </div>
                     )}
-                    <div className="control-row">
-                      <span className="wide-key"><kbd>X</kbd></span>
-                      <span><b>Run</b><small>Build a longer jump</small></span>
-                    </div>
+                    {activeCourse === 3 && (
+                      <div className="control-row important-control">
+                        <span className="wide-key"><kbd>Z</kbd></span>
+                        <span><b>Raise rodent / eat fruit</b><small>Hold to lift the rodent overhead</small></span>
+                      </div>
+                    )}
+                    {activeCourse === 4 && (
+                      <div className="control-row important-control">
+                        <span className="key-pair"><kbd>Z</kbd><kbd>SPACE</kbd></span>
+                        <span><b>Long jump</b><small>Hold Z until the meter is green, then SPACE</small></span>
+                      </div>
+                    )}
+                    {activeCourse === 5 && (
+                      <div className="control-row important-control">
+                        <span className="wide-key"><kbd>↑↓</kbd></span>
+                        <span><b>Walk along the root</b><small>Only where the same root continues</small></span>
+                      </div>
+                    )}
+                    {activeCourse !== 4 && activeCourse !== 5 && (
+                      <div className="control-row">
+                        <span className="wide-key"><kbd>X</kbd></span>
+                        <span><b>Run</b><small>{activeCourse === 3 ? "Not while a rodent is raised" : "Build a longer jump"}</small></span>
+                      </div>
+                    )}
                     <div className="field-tip">
                       <span aria-hidden="true">✦</span>
                       <p>
                         <b>FIELD TIP</b>{" "}
-                        {activeCourse === 1
-                          ? "Every transfer starts with SPACE. Steer toward the next rope, then hold Z to catch it."
-                          : "Spike damage is cumulative. Jumping clear pauses the meter, but every later fall continues from the saved damage."}
+                        {byCourse(
+                          activeCourse,
+                          "Every transfer starts with SPACE. Steer toward the next rope, then hold Z to catch it.",
+                          "Spike damage is cumulative. Jumping clear pauses the meter, but every later fall continues from the saved damage.",
+                          "Eagles only take what is raised above your head. Fruit never scares them — eat it with Z for health, or drop it and grab a rodent.",
+                          "Stand at the rear of a back before a short hop, or it lands in the next mouth. Hold Z until the meter is green, then SPACE for a long jump straight to the next back.",
+                          "Stepping on a snake and hopping straight back to your root is always safe — use it to peek at every snake in the maze, then memorize the way.",
+                        )}
                       </p>
                     </div>
                   </div>
@@ -2683,9 +5172,7 @@ export default function Home() {
                   <span>
                     {hasStarted
                       ? "RESUME COURSE"
-                      : activeCourse === 1
-                        ? "BEGIN CROSSING"
-                        : "BEGIN THE CLIMB"}
+                      : byCourse(activeCourse, "BEGIN CROSSING", "BEGIN THE CLIMB", "BRAVE THE SKIES", "HOP THE RIVER", "ENTER THE TANGLE")}
                   </span>
                   <span aria-hidden="true">→</span>
                 </button>
@@ -2696,17 +5183,47 @@ export default function Home() {
           {overlay === "gameover" && (
             <div className="game-overlay result-overlay" role="dialog" aria-modal="true" aria-labelledby="gameover-title">
               <div className="result-card">
-                <span className="result-icon" aria-hidden="true">{activeCourse === 1 ? "〰" : "▲"}</span>
+                <span className="result-icon" aria-hidden="true">{byCourse(activeCourse, "〰", "▲", "▼", "💦", "〽")}</span>
                 <p className="eyebrow">THE JUNGLE GOT YOU</p>
                 <h2 id="gameover-title">
-                  {activeCourse === 1
-                    ? "Splash! Try the timing again."
-                    : "Time’s up—the spikes got you."}
+                  {byCourse(
+                    activeCourse,
+                    "Splash! Try the timing again.",
+                    "Time’s up—the spikes got you.",
+                    eagleLoss === "health"
+                      ? "The talons wore you down."
+                      : "Carried off into the sky!",
+                    hippoLoss === "mouth"
+                      ? "Right into the mouth!"
+                      : hippoLoss === "shake"
+                        ? "Shaken off the head!"
+                        : hippoLoss === "dive"
+                          ? "The hippo dove under!"
+                          : "Splash! Missed the hippo.",
+                    snakeLoss === "instant"
+                      ? "That snake was already awake!"
+                      : "Too slow — bitten!",
+                  )}
                 </h2>
                 <p>
-                  {activeCourse === 1
-                    ? "Watch the first vine, jump toward any part of it, then keep Z pressed to hang on."
-                    : "Every spike landing adds to the same one-second damage meter. Use the branches to clear both barriers and avoid repeated falls."}
+                  {byCourse(
+                    activeCourse,
+                    "Watch the first vine, jump toward any part of it, then keep Z pressed to hang on.",
+                    "Every spike landing adds to the same one-second damage meter. Use the branches to clear both barriers and avoid repeated falls.",
+                    eagleLoss === "health"
+                      ? "Every catch costs health. Feed the eagles rodents instead, and eat fruit with Z to recover."
+                      : "Three seconds in the talons is too long. Mash SPACE faster — or better, raise a rodent with Z before the eagle arrives.",
+                    hippoLoss === "mouth"
+                      ? "The mouth is never safe. Hop from the very edge of the bank or the rear of a back to reach the head, or charge a long jump to the back."
+                      : hippoLoss === "shake"
+                        ? "Heads shake fast. Hop straight onto the back the moment you land on a head."
+                        : hippoLoss === "dive"
+                          ? "Backs are patient, not endless. Watch for bubbles and ripples, and jump before the hippo sinks."
+                          : "Watch where the arc ends. Charge the long jump until the meter is green, and never jump from the front of a back.",
+                    snakeLoss === "instant"
+                      ? "While the snakes are awake, every snake bites on contact. From a snake, only hop onto a root — or straight back to where you came from."
+                      : "A woken snake bites in a blink. Hop off the moment you land on one, and remember which bands showed their heads. The maze stays the same when you retry.",
+                  )}
                 </p>
                 <button className="primary-button compact" onClick={restartCourse} type="button">
                   TRY AGAIN <span aria-hidden="true">↻</span>
@@ -2722,14 +5239,31 @@ export default function Home() {
                 <p className="eyebrow">COURSE 0{activeCourse} COMPLETE</p>
                 <h2 id="win-title">Both explorers made it across!</h2>
                 <p>
-                  {activeCourse === 1
-                    ? "The trail rises into four ancient trees where a troop of capuchins guards every branch."
-                    : "The monkeys are dizzy and the far trail is safe. The Jaguar’s Gaze waits deeper in the jungle."}
+                  {byCourse(
+                    activeCourse,
+                    "The trail rises into four ancient trees where a troop of capuchins guards every branch.",
+                    "The monkeys are dizzy and the far trail is safe. Past the trees, hawk-eagles circle a sunny clearing.",
+                    "The eagles are fed and the trail winds on. Downriver, four hippos wallow across the only ford.",
+                    "Four hippos hopped and not a splash. Deeper in, the forest floor is a tangle of roots and sleeping snakes.",
+                    "Twenty rows of vipers and not one bite. The Canopy Chorus echoes somewhere above.",
+                  )}
                 </p>
                 <div className="result-actions">
                   {activeCourse === 1 ? (
                     <button className="primary-button compact" onClick={() => selectCourse(2)} type="button">
                       PLAY COURSE 02 <span aria-hidden="true">→</span>
+                    </button>
+                  ) : activeCourse === 2 ? (
+                    <button className="primary-button compact" onClick={() => selectCourse(3)} type="button">
+                      PLAY COURSE 03 <span aria-hidden="true">→</span>
+                    </button>
+                  ) : activeCourse === 3 ? (
+                    <button className="primary-button compact" onClick={() => selectCourse(4)} type="button">
+                      PLAY COURSE 04 <span aria-hidden="true">→</span>
+                    </button>
+                  ) : activeCourse === 4 ? (
+                    <button className="primary-button compact" onClick={() => selectCourse(5)} type="button">
+                      PLAY COURSE 05 <span aria-hidden="true">→</span>
                     </button>
                   ) : (
                     <button className="primary-button compact" onClick={() => document.querySelector("#expedition")?.scrollIntoView({ behavior: "smooth" })} type="button">
@@ -2761,7 +5295,7 @@ export default function Home() {
               aria-label="Move right"
               type="button"
             >→</button>
-            {activeCourse === 1 && (
+            {(activeCourse === 1 || activeCourse === 5) && (
               <>
                 <button
                   onPointerDown={() => pressControl("ArrowUp")}
@@ -2785,14 +5319,19 @@ export default function Home() {
           <div>
             <button
               className="grab-touch"
-              onPointerDown={() => pressControl(activeCourse === 1 ? "KeyZ" : "KeyX")}
-              onPointerUp={() => releaseControl(activeCourse === 1 ? "KeyZ" : "KeyX")}
-              onPointerCancel={() => releaseControl(activeCourse === 1 ? "KeyZ" : "KeyX")}
-              onPointerLeave={() => releaseControl(activeCourse === 1 ? "KeyZ" : "KeyX")}
-              aria-label={activeCourse === 1 ? "Grab and hold vine" : "Run"}
+              onPointerDown={() => pressControl(activeCourse === 2 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : "KeyZ")}
+              onPointerUp={() => releaseControl(activeCourse === 2 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : "KeyZ")}
+              onPointerCancel={() => releaseControl(activeCourse === 2 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : "KeyZ")}
+              onPointerLeave={() => releaseControl(activeCourse === 2 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : "KeyZ")}
+              aria-label={byCourse(activeCourse, "Grab and hold vine", "Run", "Raise rodent or eat fruit", "Hold to charge a long jump", "Hop back a row")}
               type="button"
-            >{activeCourse === 1 ? "GRAB" : "RUN"}</button>
-            <button className="jump-touch" onPointerDown={tapJump} aria-label="Jump or release vine" type="button">JUMP</button>
+            >{byCourse(activeCourse, "GRAB", "RUN", "RAISE", "CHARGE", "BACK")}</button>
+            <button
+              className="jump-touch"
+              onPointerDown={tapJump}
+              aria-label={byCourse(activeCourse, "Jump or release vine", "Jump or stomp", "Grab, drop, or struggle", "Hop, or leap while charging", "Hop forward a row")}
+              type="button"
+            >{activeCourse === 3 ? "GRAB" : activeCourse === 5 ? "HOP" : "JUMP"}</button>
           </div>
         </div>
       </section>
@@ -2805,12 +5344,33 @@ export default function Home() {
             <div><kbd className="long accent">Z</kbd><span><b>KEEP HOLDING</b> Grab any part of a vine</span></div>
             <div><kbd className="long">X</kbd><span><b>RUN</b> Jump farther</span></div>
           </>
-        ) : (
+        ) : activeCourse === 2 ? (
           <>
             <div><kbd>←→</kbd><span><b>MOVE / STEER</b> Control every leap</span></div>
             <div><kbd className="long">SPACE</kbd><span><b>JUMP / STOMP</b> Land on monkey heads</span></div>
             <div><kbd className="long accent">1 SEC</kbd><span><b>TOTAL DAMAGE</b> Every fall adds up</span></div>
             <div><kbd className="long">X</kbd><span><b>RUN</b> Cross wider gaps</span></div>
+          </>
+        ) : activeCourse === 3 ? (
+          <>
+            <div><kbd>←→</kbd><span><b>MOVE</b> Chase down rodents</span></div>
+            <div><kbd className="long">SPACE</kbd><span><b>GRAB / MASH</b> Pick up, drop, break free</span></div>
+            <div><kbd className="long accent">Z</kbd><span><b>RAISE OVERHEAD</b> Eagles take the rodent</span></div>
+            <div><kbd className="long">3 SEC</kbd><span><b>IN THE TALONS</b> Escape before it’s too late</span></div>
+          </>
+        ) : activeCourse === 4 ? (
+          <>
+            <div><kbd>←→</kbd><span><b>WALK</b> Edge of the bank, rear of a back</span></div>
+            <div><kbd className="long">SPACE</kbd><span><b>SHORT HOP</b> Mouth or head, then the back</span></div>
+            <div><kbd className="long accent">Z + SPACE</kbd><span><b>LONG JUMP</b> Charge, then leap to the next back</span></div>
+            <div><kbd className="long">MOUTH</kbd><span><b>NEVER SAFE</b> Heads shake, backs dive</span></div>
+          </>
+        ) : (
+          <>
+            <div><kbd>←→</kbd><span><b>HOP A ROW</b> Forward or back, one row only</span></div>
+            <div><kbd className="long">SPACE</kbd><span><b>HOP FORWARD</b> Same as →</span></div>
+            <div><kbd className="long accent">↑↓</kbd><span><b>WALK THE ROOT</b> Roots are always safe</span></div>
+            <div><kbd className="long">BLINK</kbd><span><b>SNAKES BITE</b> Hop off the instant you land</span></div>
           </>
         )}
       </section>
@@ -2831,11 +5391,11 @@ export default function Home() {
           {courses.map((course, index) => (
             <button
               className={`course-card ${index === activeCourse - 1 ? "current" : ""}`}
-              disabled={index > 1}
+              disabled={index > 4}
               key={course.number}
               onClick={() => selectCourse((index + 1) as CourseNumber)}
               type="button"
-              aria-label={index < 2 ? `Play course ${course.number}: ${course.title}` : `${course.title} is planned`}
+              aria-label={index < 5 ? `Play course ${course.number}: ${course.title}` : `${course.title} is planned`}
             >
               <div className="course-card-top">
                 <span className="course-number">{course.number}</span>

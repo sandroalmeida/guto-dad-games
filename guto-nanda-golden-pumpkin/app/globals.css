@@ -983,7 +983,10 @@ kbd {
   background: var(--orange);
 }
 
-.status-1 {
+.status-1,
+.status-2,
+.status-3,
+.status-4 {
   color: #935825;
   border-color: rgba(188, 113, 50, 0.3);
 }

@@ -32,9 +32,20 @@ test("renders the Golden Pumpkin game shell", async () => {
   assert.match(html, /<title>Guto &amp; Nanda and the Golden Pumpkin<\/title>/i);
   assert.match(html, /The Crocodile Canal/);
   assert.match(html, /The Pushing Monkeys/);
+  assert.match(html, /The Diving Eagles/);
+  assert.match(html, /The Hippo Crossing/);
+  assert.match(html, /The Sleeping Snakes/);
+  assert.match(html, /03 · EAGLES/);
+  assert.match(html, /04 · HIPPOS/);
+  assert.match(html, /05 · SNAKES/);
+  assert.match(html, /COURSES 01–05 READY/);
   assert.match(html, /reaches one second/i);
   assert.match(html, /two barriers/i);
   assert.match(html, /Capuchin Monkeys/i);
+  assert.match(html, /Hawk-Eagles/i);
+  assert.doesNotMatch(html, /Jaguar’s Gaze/);
+  assert.doesNotMatch(html, /Coils in the Ruins/);
+  assert.doesNotMatch(html, /The Silver Web/);
   assert.match(html, /Eight guardians\. One golden prize\./);
   assert.match(html, /ENTER THE JUNGLE/);
   assert.match(html, /\/og\.png/);
@@ -100,4 +111,96 @@ test("builds the four-tree Pushing Monkeys challenge", async () => {
     /game\.spikeTimer = 0/,
     "jumping clear must not reset cumulative spike damage",
   );
+});
+
+test("wires The Diving Eagles into the page", async () => {
+  const source = await readFile(
+    new URL("../app/page.tsx", import.meta.url),
+    "utf8",
+  );
+  const course = await readFile(
+    new URL("../app/eagle-course.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /from "\.\/eagle-course"/);
+  assert.match(source, /type CourseNumber = 1 \| 2 \| 3/);
+  assert.match(source, /game\.eagle\.spacePresses \+= 1/);
+  assert.match(source, /drawEagleWorld\(context, game, activeCharacter\)/);
+  assert.match(source, /PLAY COURSE 03/);
+  assert.match(course, /export const EAGLE_HOLD_LIMIT = 3;/);
+  assert.match(course, /export const EAGLE_TALON_DAMAGE = 25;/);
+  assert.match(course, /export const EAGLE_FRUIT_HEAL = 15;/);
+
+  const profilesStart = course.indexOf("const eagleProfiles = [");
+  const profilesEnd = course.indexOf("] as const;", profilesStart);
+  const eagles = course.slice(profilesStart, profilesEnd).match(/\{ homeX:/g)?.length ?? 0;
+  assert.equal(eagles, 3, "three eagles hunt the clearing");
+
+  for (const renderer of ["drawEagle", "drawRodent", "drawFruit", "drawEagleWorld", "drawEagleHud"]) {
+    const start = source.indexOf(`function ${renderer}(`);
+    assert.notEqual(start, -1, `${renderer} should exist`);
+    const end = source.indexOf("\nfunction ", start + 1);
+    const body = source.slice(start, end === -1 ? undefined : end);
+    const saves = body.match(/\bctx\.save\(\);/g)?.length ?? 0;
+    const restores = body.match(/\bctx\.restore\(\);/g)?.length ?? 0;
+    assert.equal(restores, saves, `${renderer} must restore every saved transform`);
+  }
+});
+
+test("wires The Hippo Crossing into the page", async () => {
+  const source = await readFile(
+    new URL("../app/page.tsx", import.meta.url),
+    "utf8",
+  );
+  const course = await readFile(
+    new URL("../app/hippo-course.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /from "\.\/hippo-course"/);
+  assert.match(source, /type CourseNumber = 1 \| 2 \| 3 \| 4/);
+  assert.match(source, /game\.hippo\.jumpPresses \+= 1/);
+  assert.match(source, /drawHippoWorld\(context, game, activeCharacter\)/);
+  assert.match(source, /PLAY COURSE 04/);
+  assert.match(course, /export const HIPPO_HEAD_LIMIT = 0\.75;/);
+  assert.match(course, /export const HIPPO_BACK_LIMIT = 2\.4;/);
+  assert.match(course, /export const HIPPO_SPACING = 215;/);
+  assert.match(course, /for \(let index = 0; index < 4; index \+= 1\)/, "four hippos wallow in the river");
+
+  for (const renderer of ["drawHippo", "drawHippoWorld", "drawHippoHud"]) {
+    const start = source.indexOf(`function ${renderer}(`);
+    assert.notEqual(start, -1, `${renderer} should exist`);
+    const end = source.indexOf("\nfunction ", start + 1);
+    const body = source.slice(start, end === -1 ? undefined : end);
+    const saves = body.match(/\bctx\.save\(\);/g)?.length ?? 0;
+    const restores = body.match(/\bctx\.restore\(\);/g)?.length ?? 0;
+    assert.equal(restores, saves, `${renderer} must restore every saved transform`);
+  }
+});
+
+test("wires The Sleeping Snakes into the page", async () => {
+  const source = await readFile(
+    new URL("../app/page.tsx", import.meta.url),
+    "utf8",
+  );
+  const course = await readFile(
+    new URL("../app/snake-course.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /from "\.\/snake-course"/);
+  assert.match(source, /type CourseNumber = 1 \| 2 \| 3 \| 4 \| 5;/);
+  assert.match(source, /game\.snake\.pendingMove = move/);
+  assert.match(source, /drawSnakeWorld\(context, game, activeCharacter\)/);
+  assert.match(source, /PLAY COURSE 05/);
+  assert.match(source, /snakeSeedRef\.current = Math\.floor/, "selecting the course rerolls the maze; retrying keeps it");
+  assert.match(course, /export const SNAKE_COLS = 20;/);
+  assert.match(course, /export const SNAKE_BITE_DELAY = 0\.65;/);
+  for (const renderer of ["drawSnakeBand", "drawTopDownCharacter", "drawSnakeWorld"]) {
+    const start = source.indexOf(`function ${renderer}(`);
+    assert.notEqual(start, -1, `${renderer} should exist`);
+    const end = source.indexOf("\nfunction ", start + 1);
+    const body = source.slice(start, end === -1 ? undefined : end);
+    const saves = body.match(/\bctx\.save\(\);/g)?.length ?? 0;
+    const restores = body.match(/\bctx\.restore\(\);/g)?.length ?? 0;
+    assert.equal(restores, saves, `${renderer} must restore every saved transform`);
+  }
 });
