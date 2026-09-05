@@ -57,15 +57,21 @@ import {
   type SnakeMove,
 } from "./snake-course";
 import {
+  PIG_BITE_CHUNK,
+  PIG_CLIMB_LENGTH,
+  PIG_CLIMB_TIME,
   PIG_FINISH_X,
-  PIG_GROUND_Y,
+  PIG_FLOOR_Y,
+  PIG_LEDGE_Y,
   PIG_LOW_STILT,
-  PIG_MAX_STILT,
   PIG_PLAYER_START_X,
   PIG_SAFE_LEFT,
   PIG_SAFE_RIGHT,
-  PIG_STILT_HEIGHT,
+  PIG_STILT_FULL,
+  PIG_STILT_SNAP,
   boulderTop,
+  canClimbOut,
+  chunksBitten,
   makePigCourse,
   stepPigCourse,
   type Boulder,
@@ -248,7 +254,7 @@ const courses = [
     skill: "Stilt-walk & vault",
     icon: "🐗",
     status: "PLAYABLE",
-    description: "Cross the valley on pea-leg stilts, vaulting boulders and outrunning the pigs before they chew through your legs.",
+    description: "Drop into the valley on pea-leg stilts taller than its walls. Every pig bite chews them shorter — cross and climb out before they're too short.",
   },
   {
     number: "07",
@@ -304,7 +310,7 @@ function makeGame(course: CourseNumber = 1, snakeSeed = 5): GameState {
     course,
     player: {
       x: course === 3 ? 105 : course === 4 ? HIPPO_PLAYER_START_X : course === 6 ? PIG_PLAYER_START_X : 125,
-      y: byCourse(course, GROUND_Y, MONKEY_GROUND_Y, EAGLE_GROUND_Y, HIPPO_BANK_Y, SNAKE_GRID_Y + SNAKE_CELL_H * 2.5, PIG_GROUND_Y),
+      y: byCourse(course, GROUND_Y, MONKEY_GROUND_Y, EAGLE_GROUND_Y, HIPPO_BANK_Y, SNAKE_GRID_Y + SNAKE_CELL_H * 2.5, PIG_LEDGE_Y),
       vx: 0,
       vy: 0,
       facing: 1,
@@ -3858,14 +3864,15 @@ function drawPig(
   ctx: CanvasRenderingContext2D,
   pig: Pig,
   elapsed: number,
-  chasing: boolean,
 ) {
   const palette = pigPalettes[Math.floor(pig.tint * pigPalettes.length) % pigPalettes.length];
+  const chasing = pig.state === "chase";
+  const chewing = pig.state === "chew";
   const trot = Math.sin(pig.trotPhase);
   const bob = Math.abs(Math.sin(pig.trotPhase)) * (chasing ? 2.6 : 1.4);
-  const chomp = pig.chompTimer > 0 ? Math.min(1, pig.chompTimer / 0.24) : 0;
+  const chomp = pig.chompTimer > 0 ? Math.min(1, pig.chompTimer / 0.3) : chewing ? (Math.sin(elapsed * 18) + 1) * 0.35 : 0;
   ctx.save();
-  ctx.translate(pig.x, PIG_GROUND_Y);
+  ctx.translate(pig.x, PIG_FLOOR_Y);
   ctx.scale(pig.facing * pig.size, pig.size);
 
   ctx.fillStyle = "rgba(25,40,18,.24)";
@@ -3879,6 +3886,7 @@ function drawPig(
   // Legs
   ctx.strokeStyle = palette.dark;
   ctx.lineWidth = 4.4;
+  const stride = chewing ? 0 : chasing ? 8 : 5;
   const legs = [
     { x: -13, swing: trot },
     { x: -6, swing: -trot },
@@ -3886,7 +3894,7 @@ function drawPig(
     { x: 15, swing: trot },
   ];
   legs.forEach((leg) => {
-    const reach = (chasing ? 8 : 5) * leg.swing;
+    const reach = stride * leg.swing;
     ctx.beginPath();
     ctx.moveTo(leg.x, -14);
     ctx.lineTo(leg.x + reach, -1);
@@ -3894,7 +3902,7 @@ function drawPig(
   });
   ctx.fillStyle = palette.hoof;
   legs.forEach((leg) => {
-    const reach = (chasing ? 8 : 5) * leg.swing;
+    const reach = stride * leg.swing;
     ctx.beginPath();
     ctx.ellipse(leg.x + reach, 0, 2.4, 1.8, 0, 0, Math.PI * 2);
     ctx.fill();
@@ -3922,7 +3930,9 @@ function drawPig(
   ctx.ellipse(-2, -15, 16, 8, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Head
+  // Head (dips toward the ground while chewing a splinter)
+  ctx.save();
+  if (chewing) ctx.translate(2, 4);
   ctx.fillStyle = palette.body;
   ctx.beginPath();
   ctx.ellipse(18, -22, 13, 12, 0, 0, Math.PI * 2);
@@ -3954,7 +3964,7 @@ function drawPig(
   ctx.arc(32.5, -20.5, 1.3, 0, Math.PI * 2);
   ctx.fill();
 
-  // Mouth / tusks while biting
+  // Mouth / tusks while biting or chewing
   if (chomp > 0) {
     ctx.strokeStyle = "#4a2a2e";
     ctx.lineWidth = 1.4;
@@ -3970,6 +3980,15 @@ function drawPig(
     ctx.closePath();
     ctx.fill();
   }
+  if (chewing) {
+    // The splinter of stilt it just bit off
+    ctx.strokeStyle = "#a9793f";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(22, -12 + chomp);
+    ctx.lineTo(36, -16 + chomp);
+    ctx.stroke();
+  }
 
   // Eye
   ctx.fillStyle = "#26181a";
@@ -3980,6 +3999,7 @@ function drawPig(
   ctx.beginPath();
   ctx.arc(19.7, -25.7, 0.7, 0, Math.PI * 2);
   ctx.fill();
+  ctx.restore();
 
   ctx.restore();
 }
@@ -3988,55 +4008,74 @@ function drawStiltWalker(
   ctx: CanvasRenderingContext2D,
   x: number,
   tipY: number,
+  length: number,
   character: Character,
   facing: number,
   elapsed: number,
   motion: CharacterMotion,
   speed: number,
-  wear: number,
+  bitten: number,
+  snapped = 0,
 ) {
-  const feetY = tipY - PIG_STILT_HEIGHT;
+  const feetY = tipY - length;
   const moving = Math.abs(speed) > 24 && motion === "idle";
   const stepL = moving ? Math.max(0, Math.sin(elapsed * 11)) * 6 : 0;
   const stepR = moving ? Math.max(0, Math.sin(elapsed * 11 + Math.PI)) * 6 : 0;
   const lean = moving ? Math.max(-0.12, Math.min(0.12, (speed / 260) * 0.12)) : 0;
+  const splintered = bitten > 0;
+
+  // Ground shadow under the stilt tips
+  ctx.save();
+  ctx.fillStyle = "rgba(25,32,20,.26)";
+  ctx.beginPath();
+  ctx.ellipse(x, tipY + 2, 20, 4.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
 
   ctx.save();
   ctx.translate(x, 0);
   ctx.rotate(lean);
 
   const poles = [
-    { dx: -8, tip: tipY - stepL },
-    { dx: 8, tip: tipY - stepR },
+    { dx: -8, tip: tipY - stepL, side: -1 },
+    { dx: 8, tip: tipY - stepR, side: 1 },
   ];
-  poles.forEach((pole, index) => {
-    // Wooden pole
+  poles.forEach((pole) => {
+    ctx.save();
+    if (snapped > 0) {
+      // Snapped stilts splay outward from the ground as the walker drops
+      ctx.translate(pole.dx, pole.tip);
+      ctx.rotate(pole.side * snapped * 1.05);
+      ctx.translate(-pole.dx, -pole.tip);
+    }
+    const top = feetY - 34;
+    // Wooden pole, from the hand-grip down to the tip
     ctx.strokeStyle = "#a9793f";
     ctx.lineWidth = 6;
     ctx.lineCap = "round";
     ctx.beginPath();
-    ctx.moveTo(pole.dx, feetY + 6);
-    ctx.lineTo(pole.dx, pole.tip);
+    ctx.moveTo(pole.dx, top);
+    ctx.lineTo(pole.dx, pole.tip - (splintered ? 3 : 0));
     ctx.stroke();
     ctx.strokeStyle = "#7c5326";
     ctx.lineWidth = 2.4;
     ctx.beginPath();
-    ctx.moveTo(pole.dx + 1.6, feetY + 8);
-    ctx.lineTo(pole.dx + 1.6, pole.tip - 2);
+    ctx.moveTo(pole.dx + 1.6, top + 4);
+    ctx.lineTo(pole.dx + 1.6, pole.tip - 4);
     ctx.stroke();
-    // Foot rest peg
+    // Foot-rest peg the boot stands on
     ctx.strokeStyle = "#6a4622";
-    ctx.lineWidth = 3.2;
+    ctx.lineWidth = 3.4;
     ctx.beginPath();
-    ctx.moveTo(pole.dx, feetY + 20);
-    ctx.lineTo(pole.dx + (index === 0 ? -7 : 7), feetY + 24);
+    ctx.moveTo(pole.dx, feetY + 1);
+    ctx.lineTo(pole.dx + pole.side * 8, feetY + 4);
     ctx.stroke();
-    // Chewed bite notches near the base, more as the stilts wear down
-    const notches = Math.round(wear * 5);
-    ctx.fillStyle = "#4f3216";
+    // Bite notches climb the pole from the tip, one per chunk chewed away
+    const notches = Math.min(8, bitten);
     for (let n = 0; n < notches; n += 1) {
-      const ny = pole.tip - 12 - n * 12;
-      if (ny < feetY + 26) break;
+      const ny = pole.tip - 8 - n * 9;
+      if (ny < feetY + 10) break;
+      ctx.fillStyle = n % 2 ? "#4f3216" : "#5e3b1a";
       ctx.beginPath();
       ctx.moveTo(pole.dx - 4, ny);
       ctx.lineTo(pole.dx + (n % 2 ? 5 : -5), ny - 3);
@@ -4044,16 +4083,31 @@ function drawStiltWalker(
       ctx.closePath();
       ctx.fill();
     }
-    // Tip on the ground
-    ctx.fillStyle = "#5f3f1f";
-    ctx.beginPath();
-    ctx.ellipse(pole.dx, pole.tip, 3.4, 2.2, 0, 0, Math.PI * 2);
-    ctx.fill();
+    if (splintered) {
+      // Jagged, chewed end
+      ctx.fillStyle = "#c9944f";
+      ctx.beginPath();
+      ctx.moveTo(pole.dx - 3.2, pole.tip - 6);
+      ctx.lineTo(pole.dx - 1, pole.tip + 1);
+      ctx.lineTo(pole.dx + 0.5, pole.tip - 4);
+      ctx.lineTo(pole.dx + 2, pole.tip + 2);
+      ctx.lineTo(pole.dx + 3.2, pole.tip - 6);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      // Fresh rubber tip
+      ctx.fillStyle = "#5f3f1f";
+      ctx.beginPath();
+      ctx.ellipse(pole.dx, pole.tip, 3.4, 2.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   });
 
   ctx.restore();
 
-  drawCharacter(ctx, x, feetY, character, facing, elapsed, motion, speed, 1);
+  const bodyFeetY = snapped > 0 ? feetY + (PIG_FLOOR_Y - 4 - feetY) * Math.min(1, snapped * 1.15) : feetY;
+  drawCharacter(ctx, x, bodyFeetY, character, facing, elapsed, motion, speed, 1);
 }
 
 function drawPigBoulder(ctx: CanvasRenderingContext2D, boulder: Boulder) {
@@ -4062,19 +4116,19 @@ function drawPigBoulder(ctx: CanvasRenderingContext2D, boulder: Boulder) {
   ctx.save();
   ctx.fillStyle = "rgba(25,32,20,.28)";
   ctx.beginPath();
-  ctx.ellipse(cx, PIG_GROUND_Y + 3, boulder.width * 0.75, 8, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx, PIG_FLOOR_Y + 3, boulder.width * 0.75, 8, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  const rock = ctx.createLinearGradient(0, top, 0, PIG_GROUND_Y);
+  const rock = ctx.createLinearGradient(0, top, 0, PIG_FLOOR_Y);
   rock.addColorStop(0, "#9aa0a4");
   rock.addColorStop(0.5, "#767c82");
   rock.addColorStop(1, "#4d5157");
   ctx.fillStyle = rock;
   ctx.beginPath();
-  ctx.moveTo(boulder.x - 6, PIG_GROUND_Y + 4);
+  ctx.moveTo(boulder.x - 6, PIG_FLOOR_Y + 4);
   ctx.quadraticCurveTo(boulder.x - 14, top + 16, boulder.x + boulder.width * 0.28, top + 2);
   ctx.quadraticCurveTo(cx, top - 8, boulder.x + boulder.width * 0.74, top + 3);
-  ctx.quadraticCurveTo(boulder.x + boulder.width + 14, top + 18, boulder.x + boulder.width + 6, PIG_GROUND_Y + 4);
+  ctx.quadraticCurveTo(boulder.x + boulder.width + 14, top + 18, boulder.x + boulder.width + 6, PIG_FLOOR_Y + 4);
   ctx.closePath();
   ctx.fill();
 
@@ -4087,7 +4141,7 @@ function drawPigBoulder(ctx: CanvasRenderingContext2D, boulder: Boulder) {
   ctx.beginPath();
   ctx.moveTo(cx - 6, top + 10);
   ctx.lineTo(cx + 2, top + 30);
-  ctx.lineTo(cx - 8, PIG_GROUND_Y - 6);
+  ctx.lineTo(cx - 8, PIG_FLOOR_Y - 6);
   ctx.stroke();
   // A little moss on top
   ctx.fillStyle = "#6f8a3f";
@@ -4099,9 +4153,10 @@ function drawPigBoulder(ctx: CanvasRenderingContext2D, boulder: Boulder) {
 
 function drawPigHud(ctx: CanvasRenderingContext2D, game: GameState) {
   const field = game.pig;
+  const climbable = canClimbOut(field);
 
   ctx.fillStyle = "rgba(38,30,18,.84)";
-  roundedRect(ctx, 18, 18, 250, 58, 12);
+  roundedRect(ctx, 18, 18, 250, 64, 12);
   ctx.fill();
   ctx.strokeStyle = "rgba(255,240,200,.3)";
   ctx.lineWidth = 2;
@@ -4110,27 +4165,51 @@ function drawPigHud(ctx: CanvasRenderingContext2D, game: GameState) {
   ctx.font = "900 10px Arial";
   ctx.textAlign = "left";
   ctx.fillText("STILT LEGS", 34, 38);
+  ctx.textAlign = "right";
+  ctx.fillStyle = climbable ? "rgba(255,242,207,.55)" : "#ff6b52";
+  ctx.fillText(climbable ? "TALLER THAN THE WALL" : "TOO SHORT TO CLIMB", 250, 38);
+
+  const barX = 34;
   const barW = 216;
-  const fill = Math.max(0, field.stilt / PIG_MAX_STILT);
+  const fill = Math.max(0, Math.min(1, field.stilt / PIG_STILT_FULL));
+  const wallAt = PIG_CLIMB_LENGTH / PIG_STILT_FULL;
+  const snapAt = PIG_STILT_SNAP / PIG_STILT_FULL;
   ctx.fillStyle = "rgba(255,245,215,.18)";
-  roundedRect(ctx, 34, 48, barW, 12, 6);
+  roundedRect(ctx, barX, 48, barW, 12, 6);
+  ctx.fill();
+  // Below the wall line the legs are too short; below the snap line they splinter
+  ctx.fillStyle = "rgba(255,120,90,.22)";
+  roundedRect(ctx, barX, 48, barW * wallAt, 12, 6);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255,60,40,.3)";
+  roundedRect(ctx, barX, 48, barW * snapAt, 12, 6);
   ctx.fill();
   const low = field.stilt <= PIG_LOW_STILT;
-  ctx.fillStyle = field.stilt <= 0 ? "#ff5a45" : low ? "#ff9b4a" : "#b4ec6d";
-  roundedRect(ctx, 34, 48, Math.max(3, barW * fill), 12, 6);
+  ctx.fillStyle = !climbable ? "#ff5a45" : low ? "#ff9b4a" : "#b4ec6d";
+  roundedRect(ctx, barX, 48, Math.max(3, barW * fill), 12, 6);
   ctx.fill();
-  for (let notch = 1; notch < 6; notch += 1) {
-    ctx.fillStyle = "rgba(38,30,18,.7)";
-    ctx.fillRect(34 + (barW * notch) / 6, 48, 1.5, 12);
+  // One tick per bite-sized chunk of wood
+  for (let chunk = 1; chunk * PIG_BITE_CHUNK < PIG_STILT_FULL; chunk += 1) {
+    ctx.fillStyle = "rgba(38,30,18,.55)";
+    ctx.fillRect(barX + (barW * chunk * PIG_BITE_CHUNK) / PIG_STILT_FULL, 48, 1, 12);
   }
+  // The valley-wall marker
+  const wallX = barX + barW * wallAt;
+  ctx.fillStyle = "#fff2cf";
+  ctx.fillRect(wallX - 1, 44, 2, 20);
+  ctx.font = "900 8px Arial";
+  ctx.textAlign = "center";
+  ctx.fillStyle = "rgba(255,242,207,.8)";
+  ctx.fillText("WALL", wallX, 74);
 
   ctx.fillStyle = "rgba(38,30,18,.84)";
-  roundedRect(ctx, WORLD_WIDTH - 18 - 250, 18, 250, 58, 12);
+  roundedRect(ctx, WORLD_WIDTH - 18 - 250, 18, 250, 64, 12);
   ctx.fill();
   ctx.strokeStyle = "rgba(255,240,200,.3)";
   ctx.stroke();
   ctx.fillStyle = "rgba(255,242,207,.72)";
   ctx.font = "900 10px Arial";
+  ctx.textAlign = "left";
   ctx.fillText("CROSS THE VALLEY", WORLD_WIDTH - 18 - 234, 38);
   const span = PIG_FINISH_X - PIG_PLAYER_START_X;
   const progress = Math.max(0, Math.min(1, (field.furthest - PIG_PLAYER_START_X) / span));
@@ -4140,13 +4219,16 @@ function drawPigHud(ctx: CanvasRenderingContext2D, game: GameState) {
   ctx.fillStyle = "#e4b34b";
   roundedRect(ctx, WORLD_WIDTH - 18 - 234, 48, Math.max(3, 216 * progress), 12, 6);
   ctx.fill();
+  ctx.font = "900 8px Arial";
+  ctx.fillStyle = "rgba(255,242,207,.6)";
+  ctx.fillText(`${field.bites} BITE${field.bites === 1 ? "" : "S"}`, WORLD_WIDTH - 18 - 234, 74);
 
   if ((game.noticeTimer > 0 && game.notice) || field.biteFlash > 0) {
     const flash = field.biteFlash > 0 && (!game.notice || game.noticeTimer <= 0);
-    const text = flash ? "CHOMP! — the pigs are biting your legs!" : game.notice;
+    const text = flash ? "CHOMP! — a bite off the stilts" : game.notice;
     const fade = flash ? Math.min(1, field.biteFlash / 0.4) : Math.min(1, game.noticeTimer / 0.4);
     ctx.fillStyle = `rgba(120,30,22,${0.8 * fade})`;
-    roundedRect(ctx, 400, 90, 400, 36, 10);
+    roundedRect(ctx, 400, 92, 400, 36, 10);
     ctx.fill();
     ctx.strokeStyle = `rgba(255,176,138,${fade})`;
     ctx.lineWidth = 2;
@@ -4154,7 +4236,7 @@ function drawPigHud(ctx: CanvasRenderingContext2D, game: GameState) {
     ctx.fillStyle = `rgba(255,242,207,${fade})`;
     ctx.font = "900 12px Arial";
     ctx.textAlign = "center";
-    ctx.fillText(text, 600, 113);
+    ctx.fillText(text, 600, 115);
   }
 }
 
@@ -4176,20 +4258,20 @@ function drawPigWorld(
   ctx.fillStyle = sky;
   ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
 
-  const sun = ctx.createRadialGradient(240, 150, 20, 240, 150, 220);
+  const sun = ctx.createRadialGradient(880, 118, 16, 880, 118, 200);
   sun.addColorStop(0, "rgba(255,250,220,.95)");
   sun.addColorStop(0.2, "rgba(255,240,180,.5)");
   sun.addColorStop(1, "rgba(255,240,180,0)");
   ctx.fillStyle = sun;
-  ctx.fillRect(20, 0, 440, 380);
+  ctx.fillRect(660, 0, 440, 340);
   ctx.fillStyle = "#fff6da";
   ctx.beginPath();
-  ctx.arc(240, 150, 40, 0, Math.PI * 2);
+  ctx.arc(880, 118, 36, 0, Math.PI * 2);
   ctx.fill();
 
   for (let cloud = 0; cloud < 4; cloud += 1) {
     const cx = ((cloud * 337 + elapsed * 8) % (WORLD_WIDTH + 260)) - 130;
-    const cy = 70 + cloud * 34;
+    const cy = 64 + cloud * 30;
     ctx.fillStyle = "rgba(255,255,255,.7)";
     for (const [dx, dy, r] of [[0, 0, 22], [24, 6, 18], [-24, 6, 17], [8, -8, 16]] as const) {
       ctx.beginPath();
@@ -4198,7 +4280,7 @@ function drawPigWorld(
     }
   }
 
-  // Distant valley walls / hills
+  // Distant hills beyond the far rim of the valley
   const drawHills = (baseY: number, color: string, offset: number, height: number) => {
     ctx.fillStyle = color;
     ctx.beginPath();
@@ -4212,90 +4294,166 @@ function drawPigWorld(
     ctx.closePath();
     ctx.fill();
   };
-  drawHills(300, "#8fb2a0", 40, 120);
-  drawHills(348, "#6f9a7f", 220, 96);
-  drawHills(392, "#54805f", 120, 74);
+  drawHills(286, "#8fb2a0", 40, 120);
+  drawHills(330, "#6f9a7f", 220, 96);
+  drawHills(372, "#54805f", 120, 74);
+
+  // The far side of the valley: a grassy rim level with the ledges, then the
+  // slope dropping to the floor where the pigs run
+  const rimY = PIG_LEDGE_Y - 16;
+  const slope = ctx.createLinearGradient(0, rimY, 0, PIG_FLOOR_Y);
+  slope.addColorStop(0, "#9bc253");
+  slope.addColorStop(0.16, "#7d9b45");
+  slope.addColorStop(0.4, "#8f7a45");
+  slope.addColorStop(0.8, "#6d5533");
+  slope.addColorStop(1, "#5c4a2c");
+  ctx.fillStyle = slope;
+  ctx.beginPath();
+  ctx.moveTo(-10, rimY + 6);
+  for (let x = -10; x <= WORLD_WIDTH + 40; x += 60) {
+    ctx.quadraticCurveTo(x + 30, rimY - 4 + ((x / 60) % 2) * 6, x + 60, rimY + 6);
+  }
+  ctx.lineTo(WORLD_WIDTH + 40, WORLD_HEIGHT);
+  ctx.lineTo(-10, WORLD_HEIGHT);
+  ctx.closePath();
+  ctx.fill();
+  // Earth strata and a few embedded stones on the slope
+  for (let band = 0; band < 5; band += 1) {
+    const y = rimY + 42 + band * 22;
+    ctx.strokeStyle = band % 2 ? "rgba(60,42,22,.18)" : "rgba(255,230,170,.1)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-10, y);
+    for (let x = 0; x <= WORLD_WIDTH; x += 80) {
+      ctx.quadraticCurveTo(x + 40, y + Math.sin(x * 0.03 + band) * 5, x + 80, y);
+    }
+    ctx.stroke();
+  }
+  for (let s = 0; s < 14; s += 1) {
+    const sx = ((s * 241 + 60) % (WORLD_WIDTH - 80)) + 40;
+    const sy = rimY + 50 + ((s * 37) % 60);
+    ctx.fillStyle = "rgba(120,118,110,.55)";
+    ctx.beginPath();
+    ctx.ellipse(sx, sy, 6 + (s % 3) * 2, 3.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
   // Valley floor
-  const floor = ctx.createLinearGradient(0, 402, 0, WORLD_HEIGHT);
-  floor.addColorStop(0, "#93a94f");
-  floor.addColorStop(0.28, "#7d9b45");
-  floor.addColorStop(0.5, "#8a7440");
-  floor.addColorStop(1, "#5f4a2b");
-  ctx.fillStyle = floor;
-  ctx.fillRect(0, 402, WORLD_WIDTH, WORLD_HEIGHT - 402);
-
-  // Grass line where the pigs run
-  const grass = ctx.createLinearGradient(0, PIG_GROUND_Y - 20, 0, PIG_GROUND_Y + 10);
+  const grass = ctx.createLinearGradient(0, PIG_FLOOR_Y - 20, 0, PIG_FLOOR_Y + 10);
   grass.addColorStop(0, "#8fb64c");
   grass.addColorStop(1, "#5c8a37");
   ctx.fillStyle = grass;
-  ctx.fillRect(0, PIG_GROUND_Y - 8, WORLD_WIDTH, 20);
+  ctx.fillRect(0, PIG_FLOOR_Y - 8, WORLD_WIDTH, 20);
+  const dirt = ctx.createLinearGradient(0, PIG_FLOOR_Y + 10, 0, WORLD_HEIGHT);
+  dirt.addColorStop(0, "#7c6a3b");
+  dirt.addColorStop(1, "#4f3d24");
+  ctx.fillStyle = dirt;
+  ctx.fillRect(0, PIG_FLOOR_Y + 12, WORLD_WIDTH, WORLD_HEIGHT - PIG_FLOOR_Y - 12);
   for (let x = 6; x < WORLD_WIDTH; x += 15) {
     const h = 6 + ((x * 7) % 9);
     const sway = Math.sin(elapsed * 1.2 + x) * 1.6;
     ctx.strokeStyle = x % 3 ? "#6f9a3c" : "#88b048";
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(x, PIG_GROUND_Y - 2);
-    ctx.lineTo(x + sway, PIG_GROUND_Y - 2 - h);
+    ctx.moveTo(x, PIG_FLOOR_Y - 2);
+    ctx.lineTo(x + sway, PIG_FLOOR_Y - 2 - h);
     ctx.stroke();
   }
-
   // Scattered mud patches, pebbles and hoof-churned earth
   for (let p = 0; p < 40; p += 1) {
     const px = ((p * 173 + 40) % (WORLD_WIDTH - 40)) + 20;
-    const py = PIG_GROUND_Y + 12 + ((p * 53) % 46);
+    const py = PIG_FLOOR_Y + 14 + ((p * 53) % 46);
     ctx.fillStyle = p % 3 ? "rgba(70,52,30,.5)" : "rgba(95,72,40,.5)";
     ctx.beginPath();
     ctx.ellipse(px, py, 6 + (p % 4) * 2, 3, 0, 0, Math.PI * 2);
     ctx.fill();
   }
 
+  // Pigs run behind the boulders, around the rocks
+  field.pigs.forEach((pig) => drawPig(ctx, pig, elapsed));
+
   // Boulders
   field.boulders.forEach((boulder) => drawPigBoulder(ctx, boulder));
 
-  // Safe ledges (start and finish plateaus)
-  const drawLedge = (left: number, right: number, side: -1 | 1) => {
+  // The high ground: a plateau at each end with a sheer cliff into the valley
+  const drawPlateau = (left: number, right: number, side: -1 | 1) => {
     const width = right - left;
-    ctx.fillStyle = "#3f2f1f";
-    roundedRect(ctx, left - 8, PIG_GROUND_Y - 6, width + 16, WORLD_HEIGHT - PIG_GROUND_Y + 20, 12);
+    const edge = side < 0 ? right : left;
+    // Cliff body
+    ctx.fillStyle = "#3a2b1c";
+    roundedRect(ctx, left - 10, PIG_LEDGE_Y - 6, width + 20, WORLD_HEIGHT - PIG_LEDGE_Y + 20, 14);
     ctx.fill();
-    const earth = ctx.createLinearGradient(0, PIG_GROUND_Y, 0, WORLD_HEIGHT);
-    earth.addColorStop(0, "#8a6a44");
-    earth.addColorStop(0.4, "#5f4630");
+    const earth = ctx.createLinearGradient(0, PIG_LEDGE_Y, 0, WORLD_HEIGHT);
+    earth.addColorStop(0, "#8f6d45");
+    earth.addColorStop(0.35, "#6a4e34");
+    earth.addColorStop(0.75, "#4a3625");
     earth.addColorStop(1, "#33261c");
     ctx.fillStyle = earth;
-    roundedRect(ctx, left - 4, PIG_GROUND_Y - 2, width + 8, WORLD_HEIGHT - PIG_GROUND_Y + 20, 10);
+    roundedRect(ctx, left - 6, PIG_LEDGE_Y - 2, width + 12, WORLD_HEIGHT - PIG_LEDGE_Y + 20, 12);
     ctx.fill();
-    const cap = ctx.createLinearGradient(0, PIG_GROUND_Y - 14, 0, PIG_GROUND_Y + 6);
-    cap.addColorStop(0, "#9ac24f");
+    // Rock strata in the cliff face
+    for (let band = 0; band < 6; band += 1) {
+      const y = PIG_LEDGE_Y + 22 + band * 20;
+      ctx.strokeStyle = band % 2 ? "rgba(20,14,8,.35)" : "rgba(255,220,160,.12)";
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(edge, y + (band % 3));
+      ctx.lineTo(edge - side * (28 + band * 9), y - 2 + ((band * 7) % 5));
+      ctx.stroke();
+    }
+    // A few stones set into the face
+    for (let s = 0; s < 4; s += 1) {
+      ctx.fillStyle = "rgba(140,135,125,.7)";
+      ctx.beginPath();
+      ctx.ellipse(edge - side * (10 + s * 11), PIG_LEDGE_Y + 34 + s * 26, 6, 4, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Dangling roots
+    ctx.strokeStyle = "#5b4128";
+    ctx.lineWidth = 2;
+    for (let r = 0; r < 3; r += 1) {
+      const rx = edge - side * (2 + r * 6);
+      ctx.beginPath();
+      ctx.moveTo(rx, PIG_LEDGE_Y + 10);
+      ctx.quadraticCurveTo(rx + side * (4 + r * 3) + Math.sin(elapsed * 1.5 + r) * 2, PIG_LEDGE_Y + 40 + r * 8, rx + side * 2, PIG_LEDGE_Y + 60 + r * 12);
+      ctx.stroke();
+    }
+    // Grassy cap with a slight overhang lip
+    const cap = ctx.createLinearGradient(0, PIG_LEDGE_Y - 16, 0, PIG_LEDGE_Y + 8);
+    cap.addColorStop(0, "#a3ca55");
     cap.addColorStop(1, "#5c8a37");
     ctx.fillStyle = cap;
-    roundedRect(ctx, left - 6, PIG_GROUND_Y - 12, width + 12, 22, 10);
+    roundedRect(ctx, left - 8, PIG_LEDGE_Y - 12, width + 16 + 4, 22, 10);
     ctx.fill();
-    for (let x = left; x < right; x += 16) {
-      drawLeaf(ctx, x, PIG_GROUND_Y - 6, 13 + (x % 4), -1.4 + Math.sin(elapsed * 0.8 + x) * 0.05, x % 3 ? "#6f9a44" : "#9bb14a");
-    }
-    // steep drop into the valley on the inner edge
-    const edge = side < 0 ? right : left;
-    ctx.fillStyle = "rgba(30,22,14,.35)";
+    ctx.fillStyle = "#5c8a37";
     ctx.beginPath();
-    ctx.moveTo(edge, PIG_GROUND_Y - 8);
-    ctx.lineTo(edge + side * 26, PIG_GROUND_Y - 8);
-    ctx.lineTo(edge, PIG_GROUND_Y + 40);
+    ctx.moveTo(edge, PIG_LEDGE_Y - 4);
+    ctx.lineTo(edge - side * 12, PIG_LEDGE_Y - 4);
+    ctx.lineTo(edge - side * 2, PIG_LEDGE_Y + 14);
+    ctx.closePath();
+    ctx.fill();
+    for (let x = left + 6; x < right - 6; x += 16) {
+      drawLeaf(ctx, x, PIG_LEDGE_Y - 8, 13 + (x % 4), -1.4 + Math.sin(elapsed * 0.8 + x) * 0.05, x % 3 ? "#6f9a44" : "#9bb14a");
+    }
+    // Shadow the cliff throws onto the floor
+    ctx.fillStyle = "rgba(30,22,14,.28)";
+    ctx.beginPath();
+    ctx.moveTo(edge, PIG_FLOOR_Y - 8);
+    ctx.lineTo(edge - side * 34, PIG_FLOOR_Y - 8);
+    ctx.lineTo(edge - side * 44, PIG_FLOOR_Y + 30);
+    ctx.lineTo(edge, PIG_FLOOR_Y + 30);
     ctx.closePath();
     ctx.fill();
   };
-  drawLedge(-20, PIG_SAFE_LEFT, -1);
-  drawLedge(PIG_SAFE_RIGHT, WORLD_WIDTH + 20, 1);
+  drawPlateau(-20, PIG_SAFE_LEFT, -1);
+  drawPlateau(PIG_SAFE_RIGHT, WORLD_WIDTH + 20, 1);
 
-  // Trail sign on the far ledge
+  // Trail sign on the far plateau
   ctx.fillStyle = "#593b22";
-  roundedRect(ctx, 1120, PIG_GROUND_Y - 96, 14, 96, 4);
+  roundedRect(ctx, 1132, PIG_LEDGE_Y - 82, 14, 82, 4);
   ctx.fill();
   ctx.fillStyle = "#e1a644";
-  roundedRect(ctx, 1074, PIG_GROUND_Y - 118, 116, 50, 7);
+  roundedRect(ctx, 1088, PIG_LEDGE_Y - 106, 112, 50, 7);
   ctx.fill();
   ctx.strokeStyle = "#8d5529";
   ctx.lineWidth = 3;
@@ -4303,17 +4461,15 @@ function drawPigWorld(
   ctx.fillStyle = "#3a281c";
   ctx.font = "800 15px Arial";
   ctx.textAlign = "center";
-  ctx.fillText("TRAIL →", 1132, PIG_GROUND_Y - 88);
+  ctx.fillText("TRAIL →", 1144, PIG_LEDGE_Y - 76);
 
-  // Pigs
-  const chasingAny = field.pigs.some((pig) => pig.state === "chase");
-  field.pigs.forEach((pig) => drawPig(ctx, pig, elapsed, pig.state === "chase"));
-
-  // Companion cheering from the start ledge
+  // Companion cheering from the start plateau
   const companion: Character = activeCharacter === "guto" ? "nanda" : "guto";
-  drawCharacter(ctx, 60, PIG_GROUND_Y, companion, 1, elapsed, player.x > PIG_SAFE_LEFT ? "wave" : "idle", 0, 0.9);
-  if (player.x > PIG_SAFE_LEFT && !field.lost && !field.won) {
-    const bubbleY = PIG_GROUND_Y - 150 + Math.sin(elapsed * 2.8) * 2;
+  const inValley = player.x > PIG_SAFE_LEFT && player.x < PIG_SAFE_RIGHT;
+  drawCharacter(ctx, 60, PIG_LEDGE_Y, companion, 1, elapsed, inValley ? "wave" : "idle", 0, 0.9);
+  if (inValley && !field.lost && !field.won) {
+    const bubbleY = PIG_LEDGE_Y - 150 + Math.sin(elapsed * 2.8) * 2;
+    const line = !canClimbOut(field) ? "OH NO!" : field.stilt <= PIG_LOW_STILT ? "HURRY!" : "BE QUICK!";
     ctx.fillStyle = "rgba(247,232,186,.92)";
     roundedRect(ctx, 14, bubbleY, 132, 32, 12);
     ctx.fill();
@@ -4325,50 +4481,77 @@ function drawPigWorld(
     ctx.fillStyle = "#7a3320";
     ctx.font = "800 11px Arial";
     ctx.textAlign = "center";
-    ctx.fillText("BE QUICK!", 80, bubbleY + 20);
+    ctx.fillText(line, 80, bubbleY + 20);
   }
 
   // The stilt-walking explorer
+  const bitten = chunksBitten(field);
   if (field.lost) {
-    // Stilts snapped — the walker tumbles among the pigs
-    const fallenY = PIG_GROUND_Y - PIG_STILT_HEIGHT * (1 - field.fallProgress);
+    // Stilts gave way — the walker drops among the pigs
     drawStiltWalker(
       ctx,
       player.x,
-      Math.min(PIG_GROUND_Y, player.y),
+      Math.min(PIG_FLOOR_Y, player.y),
+      field.stilt,
       activeCharacter,
       player.facing,
       elapsed,
       field.fallProgress > 0.4 ? "fall" : "idle",
       0,
-      1 - field.stilt / PIG_MAX_STILT,
+      bitten,
+      field.fallProgress,
     );
     ctx.fillStyle = "#ff5a45";
     ctx.font = "900 22px Arial";
     ctx.textAlign = "center";
-    ctx.fillText("CAUGHT!", player.x, fallenY - 20);
+    ctx.fillText("CAUGHT!", player.x, PIG_FLOOR_Y - 150);
   } else {
-    const motion: CharacterMotion = !player.onGround ? (player.vy < 0 ? "jump" : "fall") : "idle";
+    let drawX = player.x;
+    let drawTipY = player.y;
+    let motion: CharacterMotion = !player.onGround ? (player.vy < 0 ? "jump" : "fall") : "idle";
+    if (field.climbTimer > 0 && field.climbFrom) {
+      // Scrambling up the cliff onto the high ground
+      const t = 1 - field.climbTimer / PIG_CLIMB_TIME;
+      const eased = 1 - (1 - t) * (1 - t);
+      drawX = field.climbFrom.x + (player.x - field.climbFrom.x) * t;
+      drawTipY = field.climbFrom.y + (player.y - field.climbFrom.y) * eased;
+      motion = "jump";
+    }
+    if (field.bumpTimer > 0) drawX += Math.sin(elapsed * 46) * 2.5 * Math.min(1, field.bumpTimer / 0.9);
     drawStiltWalker(
       ctx,
-      player.x,
-      player.y,
+      drawX,
+      drawTipY,
+      field.stilt,
       activeCharacter,
       player.facing,
       elapsed,
       motion,
       player.vx,
-      1 - field.stilt / PIG_MAX_STILT,
+      bitten,
     );
-    if (field.stilt <= PIG_LOW_STILT && !field.won) {
+    const headY = drawTipY - field.stilt - 100;
+    // Keep the warning clear of the cliffs and the trail sign
+    const labelX = Math.max(120, Math.min(drawX, PIG_SAFE_RIGHT - 90));
+    if (field.bumpTimer > 0) {
+      ctx.fillStyle = "#ff5a45";
+      ctx.font = "900 15px Arial";
+      ctx.textAlign = "center";
+      ctx.fillText("TOO SHORT!", labelX, headY - 6);
+    } else if (!canClimbOut(field) && !field.won) {
       const pulse = (Math.sin(elapsed * 12) + 1) / 2;
       ctx.fillStyle = `rgba(255,90,69,${0.6 + pulse * 0.35})`;
       ctx.font = "900 13px Arial";
       ctx.textAlign = "center";
-      ctx.fillText("STILTS CRACKING!", player.x, player.y - PIG_STILT_HEIGHT - 96);
+      ctx.fillText("STILTS TOO SHORT!", labelX, headY);
+    } else if (field.stilt <= PIG_LOW_STILT && !field.won) {
+      const pulse = (Math.sin(elapsed * 10) + 1) / 2;
+      ctx.fillStyle = `rgba(255,155,74,${0.6 + pulse * 0.35})`;
+      ctx.font = "900 13px Arial";
+      ctx.textAlign = "center";
+      ctx.fillText("STILTS GETTING SHORT!", labelX, headY);
     }
   }
-  void chasingAny;
 
   drawPigHud(ctx, game);
 
@@ -5262,7 +5445,7 @@ export default function Home() {
           events.forEach((event: PigEvent) => {
             switch (event.type) {
               case "hop":
-                setCourseStatus("Hopped — a hop dodges a bite, but won't clear a boulder");
+                setCourseStatus("Hopped — pigs can't bite stilts that are off the ground");
                 playTone(360, 0.06, "square");
                 break;
               case "vault":
@@ -5271,7 +5454,11 @@ export default function Home() {
                 window.setTimeout(() => playTone(520, 0.09, "square"), 70);
                 break;
               case "land":
-                if (event.onBoulder) setCourseStatus("On top of the boulder — hop down and keep moving");
+                if (event.on === "boulder") {
+                  setCourseStatus("Safe on the rock — the pigs can't reach you. Hop down when the coast is clear");
+                } else if (event.on === "floor" && player.x > PIG_SAFE_LEFT && player.x < PIG_SAFE_RIGHT) {
+                  setCourseStatus("Down in the valley — hold X and RUN!");
+                }
                 break;
               case "blocked":
                 setCourseStatus("A boulder! Hold Z + SPACE to vault over it");
@@ -5283,8 +5470,23 @@ export default function Home() {
                 window.setTimeout(() => playTone(110, 0.1, "sawtooth"), 40);
                 break;
               case "warn":
-                setCourseStatus("Your stilts are cracking — RUN for the far side!");
+                setCourseStatus("Your stilts are getting short — two more bites and you can't climb out!");
                 playTone(200, 0.16, "sawtooth");
+                break;
+              case "trapped":
+                notify("TOO SHORT TO CLIMB OUT!", 2.2);
+                setCourseStatus("The stilts are shorter than the valley wall — and the whole herd is coming");
+                playTone(180, 0.2, "sawtooth");
+                window.setTimeout(() => playTone(120, 0.24, "sawtooth"), 160);
+                break;
+              case "tooShort":
+                setCourseStatus("TOO SHORT! The stilts can't reach the top of the wall");
+                playTone(130, 0.1, "square");
+                break;
+              case "climb":
+                if (event.side === "left") setCourseStatus("Back on the high ground — catch your breath");
+                playTone(420, 0.06, "square");
+                window.setTimeout(() => playTone(560, 0.08, "square"), 60);
                 break;
               case "won":
                 game.running = false;
@@ -5299,7 +5501,11 @@ export default function Home() {
                 game.lost = true;
                 setPigLoss(event.reason);
                 setOverlay("gameover");
-                setCourseStatus("The pigs chewed through your stilts");
+                setCourseStatus(
+                  event.reason === "trapped"
+                    ? "Stuck in the valley — the stilts were too short to climb out"
+                    : "The pigs chewed through your stilts",
+                );
                 playTone(105, 0.42, "sawtooth");
                 break;
             }
@@ -5308,20 +5514,26 @@ export default function Home() {
           statusTimer += dt;
           if (statusTimer > 0.5 && events.length === 0 && !game.won && !game.lost) {
             statusTimer = 0;
+            const onHighGround = player.onGround && player.y <= PIG_LEDGE_Y + 0.5;
+            const onRock = player.onGround && !onHighGround && player.y < PIG_FLOOR_Y - 0.5;
             const nextBoulder = valley.boulders
               .map((boulder) => boulder.x - player.x)
               .filter((gap) => gap > 0 && gap < 150)
               .sort((a, b) => a - b)[0];
             setCourseStatus(
-              player.x <= PIG_SAFE_LEFT
-                ? "On the ledge — hold X and run across before the pigs swarm"
-                : player.x >= PIG_SAFE_RIGHT
-                  ? "Almost there — the trail is just ahead!"
-                  : nextBoulder !== undefined
-                    ? "Boulder ahead — hold Z + SPACE to vault it"
-                    : valley.stilt <= PIG_LOW_STILT
-                      ? `Stilts at ${Math.round((valley.stilt / PIG_MAX_STILT) * 100)}% — keep running!`
-                      : "Keep moving — the pigs are after your stilts",
+              onHighGround && player.x <= PIG_SAFE_LEFT
+                ? "On the high ground — hold X, run, and drop into the valley"
+                : onRock
+                  ? "Resting on the rock — hop down and run when the pig wanders off"
+                  : !canClimbOut(valley)
+                    ? "Stilts too short for the wall — the herd is loose"
+                    : nextBoulder !== undefined
+                      ? "Boulder ahead — hold Z + SPACE to vault it"
+                      : valley.stilt <= PIG_LOW_STILT
+                        ? "Stilts nearly too short — no more bites, run for the wall!"
+                        : player.x > (PIG_SAFE_LEFT + PIG_SAFE_RIGHT) / 2
+                          ? "Halfway — keep running and climb the far wall"
+                          : "Keep moving — the pigs bite planted stilts",
             );
           }
         }
@@ -5630,7 +5842,7 @@ export default function Home() {
             "A sunny clearing with no cover. Three hawk-eagles circle above, so carry a rodent, raise it when they dive, and never stop moving.",
             "Four hippos wallow between the banks. Every part of a hippo is a landing spot, but only the back forgives a pause — and one hippo likes to dive.",
             "Seen from above, the forest floor is a tangle of roots and sleeping vipers that look exactly alike. Hop one row at a time, wake them on purpose, and remember what you saw.",
-            "A valley of wild pigs. Strap on the pea-leg stilts and hurry across — the boars will bite through the wooden legs, and boulders block the way until you vault them.",
+            "The trail ends at a cliff. Down in the valley, wild pigs root among the boulders. Strap on the pea-leg stilts — taller than the valley wall, for now — and cross before the boars chew them too short to climb out.",
           )}
         </p>
       </section>
@@ -5676,7 +5888,7 @@ export default function Home() {
               "A side-scrolling clearing course. Cross an open meadow while three eagles dive, raising rodents overhead as shields and mashing free if caught.",
               "A side-scrolling river course. Hop across four hippos using short hops and charged long jumps, landing on heads and backs but never in a mouth.",
               "A top-down maze course. Hop across twenty rows of roots and sleeping snakes that look identical, waking snakes briefly to memorize a safe path.",
-              "A side-scrolling valley course. Run across on wooden stilts, vaulting boulders with Z and Space while wild pigs chase and bite through the stilt legs.",
+              "A side-scrolling valley course. Drop from the high ground and cross the valley floor on wooden stilts, vaulting boulders with Z and Space while wild pigs bite the stilts shorter; climb out only while the stilts are still taller than the valley wall.",
             )}
           />
 
@@ -5712,7 +5924,7 @@ export default function Home() {
                       ) : activeCourse === 5 ? (
                         <>Cross twenty rows.<br />Remember the snakes.</>
                       ) : (
-                        <>Cross the valley.<br />Outrun the wild pigs.</>
+                        <>Cross the valley.<br />Climb out before the stilts are too short.</>
                       )}
                     </h2>
                     <p>
@@ -5740,10 +5952,10 @@ export default function Home() {
                         for a moment — hop to a root (or straight back) before it bites. Roots are
                         safe forever: walk along them with <strong>↑↓</strong> to line up the next hop.</>
                       ) : (
-                        <>Balance on the pea-leg stilts and <strong>hurry across the valley</strong>.
-                        Wild pigs chase you and <strong>bite the wooden legs</strong> — take too many bites and
-                        the stilts snap. Hold <strong>X</strong> to run, and press <strong>Z + SPACE</strong>{" "}
-                        to vault the boulders in your way.</>
+                        <>The stilts are <strong>taller than the valley wall</strong> — that is how you climb
+                        out on the far side. Every pig bite <strong>chews them shorter</strong>, and once they
+                        are shorter than the wall you are stuck down there. Hold <strong>X</strong> to run,
+                        press <strong>Z + SPACE</strong> to vault the boulders, and never stand still.</>
                       )}
                     </p>
 
@@ -5781,14 +5993,14 @@ export default function Home() {
                       <span className="key-pair"><kbd>←→</kbd>{(activeCourse === 1 || activeCourse === 5) && <kbd>↑↓</kbd>}</span>
                       <span>
                         <b>{byCourse(activeCourse, "Move / climb", "Move / steer", "Move", "Walk", "Hop a row", "Move / run")}</b>
-                        <small>{byCourse(activeCourse, "Steer in air, climb on a vine", "Control every jump in the air", "Walk the clearing, chase rodents", "Position yourself on a back or the bank edge", "Forward or back, onto whatever is there", "Cross the valley, steer in the air")}</small>
+                        <small>{byCourse(activeCourse, "Steer in air, climb on a vine", "Control every jump in the air", "Walk the clearing, chase rodents", "Position yourself on a back or the bank edge", "Forward or back, onto whatever is there", "Walk off the ledge, cross the floor, steer in the air")}</small>
                       </span>
                     </div>
                     <div className="control-row">
                       <span className="wide-key"><kbd>SPACE</kbd></span>
                       <span>
                         <b>{byCourse(activeCourse, "Jump / release", "Jump / stomp", "Grab / drop / struggle", "Short hop", "Hop forward", "Hop")}</b>
-                        <small>{byCourse(activeCourse, "Leap at the swing’s edge", "Land on monkeys to make them dizzy", "Pick up what’s nearest; mash to break free", "Bank → mouth or head · head → back · back → next head", "Same as →, one row at a time", "A quick hop dodges a bite (but not a boulder)")}</small>
+                        <small>{byCourse(activeCourse, "Leap at the swing’s edge", "Land on monkeys to make them dizzy", "Pick up what’s nearest; mash to break free", "Bank → mouth or head · head → back · back → next head", "Same as →, one row at a time", "Lifts the stilts clear of a bite — too low for a boulder")}</small>
                       </span>
                     </div>
                     {activeCourse === 1 && (
@@ -5818,13 +6030,13 @@ export default function Home() {
                     {activeCourse === 6 && (
                       <div className="control-row important-control">
                         <span className="key-pair"><kbd>Z</kbd><kbd>SPACE</kbd></span>
-                        <span><b>Stilt vault</b><small>Hold Z and press SPACE to clear a boulder</small></span>
+                        <span><b>Stilt vault</b><small>Hold Z and press SPACE with a run-up to clear a boulder — from a standstill you land on top of it, out of the pigs’ reach</small></span>
                       </div>
                     )}
                     {activeCourse !== 4 && activeCourse !== 5 && (
                       <div className="control-row">
                         <span className="wide-key"><kbd>X</kbd></span>
-                        <span><b>Run</b><small>{activeCourse === 3 ? "Not while a rodent is raised" : activeCourse === 6 ? "Be quick — outrun the pigs" : "Build a longer jump"}</small></span>
+                        <span><b>Run</b><small>{activeCourse === 3 ? "Not while a rodent is raised" : activeCourse === 6 ? "Faster than a charging pig — walking is not" : "Build a longer jump"}</small></span>
                       </div>
                     )}
                     <div className="field-tip">
@@ -5838,7 +6050,7 @@ export default function Home() {
                           "Eagles only take what is raised above your head. Fruit never scares them — eat it with Z for health, or drop it and grab a rodent.",
                           "Stand at the rear of a back before a short hop, or it lands in the next mouth. Hold Z until the meter is green, then SPACE for a long jump straight to the next back.",
                           "Stepping on a snake and hopping straight back to your root is always safe — use it to peek at every snake in the maze, then memorize the way.",
-                          "A hop or a vault lifts the stilts off the ground, and pigs can only bite while the legs are planted. Keep running — a pig you pass can never catch a runner from behind.",
+                          "Watch the WALL mark on the stilt meter: above it you can climb out, below it you can't. Pigs only bite planted stilts, and the top of a boulder is out of their reach — rest there until the pig wanders off, then run.",
                         )}
                       </p>
                     </div>
@@ -5879,9 +6091,9 @@ export default function Home() {
                     snakeLoss === "instant"
                       ? "That snake was already awake!"
                       : "Too slow — bitten!",
-                    pigLoss === "stilts"
-                      ? "The pigs chewed through your stilts!"
-                      : "The pigs got you!",
+                    pigLoss === "trapped"
+                      ? "Too short to climb out!"
+                      : "The pigs chewed through your stilts!",
                   )}
                 </h2>
                 <p>
@@ -5902,7 +6114,9 @@ export default function Home() {
                     snakeLoss === "instant"
                       ? "While the snakes are awake, every snake bites on contact. From a snake, only hop onto a root — or straight back to where you came from."
                       : "A woken snake bites in a blink. Hop off the moment you land on one, and remember which bands showed their heads. The maze stays the same when you retry.",
-                    "The stilts only take so many bites. Hold X to run, hop or vault to lift the legs clear, and never stop for long — a boulder you can't vault is a trap when the pigs close in.",
+                    pigLoss === "trapped"
+                      ? "Every bite chews the stilts shorter, and once they're shorter than the valley wall there is no way up. Keep the meter above the WALL mark: run, vault early, and rest on a rock when a pig is right under you."
+                      : "The stilts only take so many bites. Hold X to run, hop or vault to lift the legs clear, and never stand still on the floor — a boulder you haven't vaulted yet is where the pigs catch you.",
                   )}
                 </p>
                 <button className="primary-button compact" onClick={restartCourse} type="button">
@@ -5926,7 +6140,7 @@ export default function Home() {
                     "The eagles are fed and the trail winds on. Downriver, four hippos wallow across the only ford.",
                     "Four hippos hopped and not a splash. Deeper in, the forest floor is a tangle of roots and sleeping snakes.",
                     "Twenty rows of vipers and not one bite. Beyond the trees the ground drops into a valley where wild pigs root and squeal.",
-                    "Across the valley on wobbling stilts, and not a single boar caught you. Somewhere ahead a gentle giant guards the way.",
+                    "Up and over the far wall with wood to spare, and not a single boar caught you. Somewhere ahead a gentle giant guards the way.",
                   )}
                 </p>
                 <div className="result-actions">
@@ -6059,10 +6273,10 @@ export default function Home() {
           </>
         ) : (
           <>
-            <div><kbd>←→</kbd><span><b>MOVE</b> Cross the valley on stilts</span></div>
-            <div><kbd className="long">SPACE</kbd><span><b>HOP</b> A quick hop dodges a bite</span></div>
-            <div><kbd className="long accent">Z + SPACE</kbd><span><b>VAULT</b> Clear the boulders</span></div>
-            <div><kbd className="long">X</kbd><span><b>RUN</b> Be quick — outrun the pigs</span></div>
+            <div><kbd>←→</kbd><span><b>MOVE</b> Drop in, cross the floor on stilts</span></div>
+            <div><kbd className="long">SPACE</kbd><span><b>HOP</b> Lift the stilts clear of a bite</span></div>
+            <div><kbd className="long accent">Z + SPACE</kbd><span><b>VAULT</b> Clear the boulders with a run-up</span></div>
+            <div><kbd className="long">WALL</kbd><span><b>STILTS SHRINK</b> Below the mark you can’t climb out</span></div>
           </>
         )}
       </section>

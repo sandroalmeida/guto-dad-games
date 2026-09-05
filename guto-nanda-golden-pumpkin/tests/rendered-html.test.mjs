@@ -225,8 +225,12 @@ test("wires The Wild Pig Valley into the page", async () => {
   assert.match(source, /drawPigWorld\(context, game, activeCharacter\)/);
   assert.match(source, /PLAY COURSE 06/);
   assert.match(source, /06 · PIGS/);
-  assert.match(course, /export const PIG_BITE_DAMAGE = 0\.16;/);
+  assert.match(course, /export const PIG_BITE_CHUNK = 11;/);
   assert.match(course, /export const PIG_VAULT_VY = -650;/);
+  assert.match(course, /export const PIG_LEDGE_Y = PIG_FLOOR_Y - PIG_VALLEY_DEPTH;/, "the ledges sit above the valley floor");
+  assert.match(course, /export const PIG_CLIMB_LENGTH = PIG_VALLEY_DEPTH - PIG_CLIMB_REACH;/, "stilts must reach the wall height to climb out");
+  assert.match(source, /PIG_LEDGE_Y\)/, "the explorer starts on the high ground");
+  assert.match(source, /canClimbOut\(field\)/, "the HUD reports whether the stilts still clear the wall");
 
   const bouldersStart = course.indexOf("export const pigBoulders = [");
   const bouldersEnd = course.indexOf("] as const;", bouldersStart);

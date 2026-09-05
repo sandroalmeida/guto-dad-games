@@ -32,12 +32,14 @@ Golden Pumpkin.
   rows of winding roots and sleeping vipers that look identical, one-row hops,
   walking along roots, an all-snakes-wake reveal with a 0.65-second bite
   timer, and a layout that stays the same while you retry.
-- Course 6 sends the explorers across a valley on game-provided pea-leg
-  stilts: five wild pigs that roam and then charge, biting through the wooden
-  legs on a shared integrity meter; three boulders that block the stilts until
-  you clear them with a `Z + Space` vault; running to outpace the boars; brief
-  safety while a hop or vault lifts the legs off the ground; and the pigs
-  catching you the moment the stilts snap.
+- Course 6 drops the explorers from the high ground into a valley on
+  game-provided pea-leg stilts that start taller than the valley wall: every
+  pig bite chews a chunk off the bottom, so the walker sinks lower bite by
+  bite, and once the stilts are shorter than the wall there is no climbing out.
+  Three wild pigs each patrol their own stretch of floor between three boulders
+  (cleared with a run-up `Z + Space` vault, or used as a bite-proof perch), bite
+  at a calm cadence with a moment to line up and a pause to chew, and the whole
+  herd is let loose only once the stilts are too short.
 
 ## Controls
 
@@ -92,16 +94,24 @@ so that a safe path exists and never needs two snakes in a row, and no lane is
 a straight shot; retrying keeps the same maze so you can use what you
 memorized.
 
-In Course 6, both ends of the valley are safe ledges; in between, wild pigs
-roam. Walk with `←` / `→` and hold `X` to run — running is the only pace that
-keeps you ahead of a charging boar, so be quick. `Space` is a short hop that
-lifts the stilts off the ground for a moment (pigs can only bite planted
-legs), but it is too low to clear a boulder. Hold `Z` and press `Space` for a
-stilt vault, high and long enough to sail over the three boulders that block
-the path; a run-up carries you across. Every pig bite chews the same stilt
-integrity meter, and when it runs out the legs snap and the pigs pounce. A pig
-you have already passed can never catch a runner from behind, so keep moving
-and reach the trail on the far ledge.
+In Course 6, both ends of the valley are high ground; the floor between them
+sits a wall's height lower, and that is where the pigs are. You start on the
+left plateau on pea-leg stilts taller than the wall, so walking off the edge
+drops the stilt tips to the floor while your feet stay level with the top. Walk
+with `←` / `→` and hold `X` to run — a charging pig is faster than a walk but
+slower than a run. Pigs only bite stilts that are planted on the floor, and
+every bite chews one chunk off the bottom: the walker sinks a little lower and
+the stilt meter shrinks toward its WALL mark. Reach the far cliff with the
+meter above the mark and the explorer steps straight up onto the trail; reach
+it below the mark and the stilts can't touch the top, you are stuck down there,
+and the whole herd comes running until the splintered legs give way. `Space`
+is a short hop that lifts the stilts clear of a bite but is too low for a
+boulder. Hold `Z` and press `Space` for a stilt vault: with a run-up it sails
+over the three boulders, and from a standstill it lands you on top of the rock,
+where no pig can reach you — rest there until the pig wanders off. Each pig
+keeps to its own stretch of floor between the boulders, needs a moment to line
+up a bite, and stops to chew after one, so keep moving and no more than a bite
+or two should ever land.
 
 ## Run locally
 
