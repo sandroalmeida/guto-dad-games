@@ -6,9 +6,9 @@ Golden Pumpkin.
 
 ## Current build
 
-- Courses 1 through 5 are playable end to end: **The Crocodile Canal**,
-  **The Pushing Monkeys**, **The Diving Eagles**, **The Hippo Crossing**, and
-  **The Sleeping Snakes**.
+- Courses 1 through 6 are playable end to end: **The Crocodile Canal**,
+  **The Pushing Monkeys**, **The Diving Eagles**, **The Hippo Crossing**,
+  **The Sleeping Snakes**, and **The Wild Pig Valley**.
 - Choose Guto or Nanda as the active explorer; their partner cheers from shore.
 - Run, jump, catch any part of a swinging vine, climb it, and reach the far bank.
 - Animated crocodiles, water, procedural jungle scenery, sound cues, game-over,
@@ -32,6 +32,12 @@ Golden Pumpkin.
   rows of winding roots and sleeping vipers that look identical, one-row hops,
   walking along roots, an all-snakes-wake reveal with a 0.65-second bite
   timer, and a layout that stays the same while you retry.
+- Course 6 sends the explorers across a valley on game-provided pea-leg
+  stilts: five wild pigs that roam and then charge, biting through the wooden
+  legs on a shared integrity meter; three boulders that block the stilts until
+  you clear them with a `Z + Space` vault; running to outpace the boars; brief
+  safety while a hop or vault lifts the legs off the ground; and the pigs
+  catching you the moment the stilts snap.
 
 ## Controls
 
@@ -85,6 +91,17 @@ root puts them all back to sleep at once. Every maze is generated and checked
 so that a safe path exists and never needs two snakes in a row, and no lane is
 a straight shot; retrying keeps the same maze so you can use what you
 memorized.
+
+In Course 6, both ends of the valley are safe ledges; in between, wild pigs
+roam. Walk with `←` / `→` and hold `X` to run — running is the only pace that
+keeps you ahead of a charging boar, so be quick. `Space` is a short hop that
+lifts the stilts off the ground for a moment (pigs can only bite planted
+legs), but it is too low to clear a boulder. Hold `Z` and press `Space` for a
+stilt vault, high and long enough to sail over the three boulders that block
+the path; a run-up carries you across. Every pig bite chews the same stilt
+integrity meter, and when it runs out the legs snap and the pigs pounce. A pig
+you have already passed can never catch a runner from behind, so keep moving
+and reach the trail on the far ledge.
 
 ## Run locally
 

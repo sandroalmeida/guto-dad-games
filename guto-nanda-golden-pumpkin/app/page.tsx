@@ -56,10 +56,28 @@ import {
   type SnakeLossReason,
   type SnakeMove,
 } from "./snake-course";
+import {
+  PIG_FINISH_X,
+  PIG_GROUND_Y,
+  PIG_LOW_STILT,
+  PIG_MAX_STILT,
+  PIG_PLAYER_START_X,
+  PIG_SAFE_LEFT,
+  PIG_SAFE_RIGHT,
+  PIG_STILT_HEIGHT,
+  boulderTop,
+  makePigCourse,
+  stepPigCourse,
+  type Boulder,
+  type Pig,
+  type PigCourseState,
+  type PigEvent,
+  type PigLossReason,
+} from "./pig-course";
 
 type Character = "guto" | "nanda";
 type Overlay = "briefing" | "gameover" | "won" | null;
-type CourseNumber = 1 | 2 | 3 | 4 | 5;
+type CourseNumber = 1 | 2 | 3 | 4 | 5 | 6;
 
 type Vine = {
   x: number;
@@ -115,6 +133,7 @@ type GameState = {
   eagle: EagleCourseState;
   hippo: HippoCourseState;
   snake: SnakeCourseState;
+  pig: PigCourseState;
   notice: string;
   noticeTimer: number;
   running: boolean;
@@ -224,12 +243,12 @@ const courses = [
   },
   {
     number: "06",
-    animal: "Toucan",
-    title: "Canopy Chorus",
-    skill: "Listen & repeat",
-    icon: "🦜",
-    status: "PLANNED",
-    description: "Repeat the toucans’ call to reveal a hidden path through the leaves.",
+    animal: "Wild Pigs",
+    title: "The Wild Pig Valley",
+    skill: "Stilt-walk & vault",
+    icon: "🐗",
+    status: "PLAYABLE",
+    description: "Cross the valley on pea-leg stilts, vaulting boulders and outrunning the pigs before they chew through your legs.",
   },
   {
     number: "07",
@@ -251,8 +270,18 @@ const courses = [
   },
 ];
 
-function byCourse<T>(course: CourseNumber, one: T, two: T, three: T, four: T, five: T): T {
-  return course === 1 ? one : course === 2 ? two : course === 3 ? three : course === 4 ? four : five;
+function byCourse<T>(course: CourseNumber, one: T, two: T, three: T, four: T, five: T, six: T): T {
+  return course === 1
+    ? one
+    : course === 2
+      ? two
+      : course === 3
+        ? three
+        : course === 4
+          ? four
+          : course === 5
+            ? five
+            : six;
 }
 
 function makeGame(course: CourseNumber = 1, snakeSeed = 5): GameState {
@@ -274,8 +303,8 @@ function makeGame(course: CourseNumber = 1, snakeSeed = 5): GameState {
   return {
     course,
     player: {
-      x: course === 3 ? 105 : course === 4 ? HIPPO_PLAYER_START_X : 125,
-      y: byCourse(course, GROUND_Y, MONKEY_GROUND_Y, EAGLE_GROUND_Y, HIPPO_BANK_Y, SNAKE_GRID_Y + SNAKE_CELL_H * 2.5),
+      x: course === 3 ? 105 : course === 4 ? HIPPO_PLAYER_START_X : course === 6 ? PIG_PLAYER_START_X : 125,
+      y: byCourse(course, GROUND_Y, MONKEY_GROUND_Y, EAGLE_GROUND_Y, HIPPO_BANK_Y, SNAKE_GRID_Y + SNAKE_CELL_H * 2.5, PIG_GROUND_Y),
       vx: 0,
       vy: 0,
       facing: 1,
@@ -294,6 +323,7 @@ function makeGame(course: CourseNumber = 1, snakeSeed = 5): GameState {
     eagle: makeEagleCourse(Math.floor(Math.random() * 1e9)),
     hippo: makeHippoCourse(Math.floor(Math.random() * 1e9)),
     snake: course === 5 ? makeSnakeCourse(snakeSeed) : makeSnakeCourse(1),
+    pig: makePigCourse(Math.floor(Math.random() * 1e9)),
     notice: "",
     noticeTimer: 0,
     running: false,
@@ -3818,6 +3848,536 @@ function drawSnakeWorld(
   }
 }
 
+const pigPalettes = [
+  { body: "#e9a9b4", belly: "#f6cdd3", dark: "#c77f8d", snout: "#d98594", hoof: "#7a4a4f" },
+  { body: "#e7bda0", belly: "#f4dcc8", dark: "#c2916f", snout: "#d69f82", hoof: "#6f4d3a" },
+  { body: "#d98f9c", belly: "#efbcc4", dark: "#b06976", snout: "#c9737f", hoof: "#6b3f45" },
+] as const;
+
+function drawPig(
+  ctx: CanvasRenderingContext2D,
+  pig: Pig,
+  elapsed: number,
+  chasing: boolean,
+) {
+  const palette = pigPalettes[Math.floor(pig.tint * pigPalettes.length) % pigPalettes.length];
+  const trot = Math.sin(pig.trotPhase);
+  const bob = Math.abs(Math.sin(pig.trotPhase)) * (chasing ? 2.6 : 1.4);
+  const chomp = pig.chompTimer > 0 ? Math.min(1, pig.chompTimer / 0.24) : 0;
+  ctx.save();
+  ctx.translate(pig.x, PIG_GROUND_Y);
+  ctx.scale(pig.facing * pig.size, pig.size);
+
+  ctx.fillStyle = "rgba(25,40,18,.24)";
+  ctx.beginPath();
+  ctx.ellipse(0, 2, 26, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.translate(0, -bob);
+  ctx.lineCap = "round";
+
+  // Legs
+  ctx.strokeStyle = palette.dark;
+  ctx.lineWidth = 4.4;
+  const legs = [
+    { x: -13, swing: trot },
+    { x: -6, swing: -trot },
+    { x: 8, swing: -trot },
+    { x: 15, swing: trot },
+  ];
+  legs.forEach((leg) => {
+    const reach = (chasing ? 8 : 5) * leg.swing;
+    ctx.beginPath();
+    ctx.moveTo(leg.x, -14);
+    ctx.lineTo(leg.x + reach, -1);
+    ctx.stroke();
+  });
+  ctx.fillStyle = palette.hoof;
+  legs.forEach((leg) => {
+    const reach = (chasing ? 8 : 5) * leg.swing;
+    ctx.beginPath();
+    ctx.ellipse(leg.x + reach, 0, 2.4, 1.8, 0, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // Curly tail
+  ctx.strokeStyle = palette.dark;
+  ctx.lineWidth = 2.6;
+  ctx.beginPath();
+  ctx.moveTo(-22, -22);
+  ctx.quadraticCurveTo(-30, -26, -27, -31);
+  ctx.quadraticCurveTo(-24, -35, -29, -37);
+  ctx.stroke();
+
+  // Body
+  const body = ctx.createLinearGradient(0, -34, 0, -6);
+  body.addColorStop(0, palette.body);
+  body.addColorStop(1, palette.dark);
+  ctx.fillStyle = body;
+  ctx.beginPath();
+  ctx.ellipse(-2, -20, 22, 15, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = palette.belly;
+  ctx.beginPath();
+  ctx.ellipse(-2, -15, 16, 8, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Head
+  ctx.fillStyle = palette.body;
+  ctx.beginPath();
+  ctx.ellipse(18, -22, 13, 12, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Ears
+  ctx.fillStyle = palette.dark;
+  ctx.beginPath();
+  ctx.moveTo(12, -33);
+  ctx.lineTo(18, -30);
+  ctx.lineTo(10, -27);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(22, -33);
+  ctx.lineTo(27, -29);
+  ctx.lineTo(19, -28);
+  ctx.closePath();
+  ctx.fill();
+
+  // Snout
+  ctx.fillStyle = palette.snout;
+  ctx.beginPath();
+  ctx.ellipse(30, -20 + chomp * 1.5, 6.5, 5 + chomp * 1.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#5a3238";
+  ctx.beginPath();
+  ctx.arc(29, -20.5, 1.3, 0, Math.PI * 2);
+  ctx.arc(32.5, -20.5, 1.3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Mouth / tusks while biting
+  if (chomp > 0) {
+    ctx.strokeStyle = "#4a2a2e";
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(24, -14 + chomp * 2);
+    ctx.lineTo(31, -13 + chomp * 3);
+    ctx.stroke();
+    ctx.fillStyle = "#fdf3e2";
+    ctx.beginPath();
+    ctx.moveTo(25, -14);
+    ctx.lineTo(27, -14);
+    ctx.lineTo(25.5, -10 - chomp * 2);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Eye
+  ctx.fillStyle = "#26181a";
+  ctx.beginPath();
+  ctx.arc(19, -25, chasing ? 2.2 : 1.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255,255,255,.85)";
+  ctx.beginPath();
+  ctx.arc(19.7, -25.7, 0.7, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawStiltWalker(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  tipY: number,
+  character: Character,
+  facing: number,
+  elapsed: number,
+  motion: CharacterMotion,
+  speed: number,
+  wear: number,
+) {
+  const feetY = tipY - PIG_STILT_HEIGHT;
+  const moving = Math.abs(speed) > 24 && motion === "idle";
+  const stepL = moving ? Math.max(0, Math.sin(elapsed * 11)) * 6 : 0;
+  const stepR = moving ? Math.max(0, Math.sin(elapsed * 11 + Math.PI)) * 6 : 0;
+  const lean = moving ? Math.max(-0.12, Math.min(0.12, (speed / 260) * 0.12)) : 0;
+
+  ctx.save();
+  ctx.translate(x, 0);
+  ctx.rotate(lean);
+
+  const poles = [
+    { dx: -8, tip: tipY - stepL },
+    { dx: 8, tip: tipY - stepR },
+  ];
+  poles.forEach((pole, index) => {
+    // Wooden pole
+    ctx.strokeStyle = "#a9793f";
+    ctx.lineWidth = 6;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(pole.dx, feetY + 6);
+    ctx.lineTo(pole.dx, pole.tip);
+    ctx.stroke();
+    ctx.strokeStyle = "#7c5326";
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(pole.dx + 1.6, feetY + 8);
+    ctx.lineTo(pole.dx + 1.6, pole.tip - 2);
+    ctx.stroke();
+    // Foot rest peg
+    ctx.strokeStyle = "#6a4622";
+    ctx.lineWidth = 3.2;
+    ctx.beginPath();
+    ctx.moveTo(pole.dx, feetY + 20);
+    ctx.lineTo(pole.dx + (index === 0 ? -7 : 7), feetY + 24);
+    ctx.stroke();
+    // Chewed bite notches near the base, more as the stilts wear down
+    const notches = Math.round(wear * 5);
+    ctx.fillStyle = "#4f3216";
+    for (let n = 0; n < notches; n += 1) {
+      const ny = pole.tip - 12 - n * 12;
+      if (ny < feetY + 26) break;
+      ctx.beginPath();
+      ctx.moveTo(pole.dx - 4, ny);
+      ctx.lineTo(pole.dx + (n % 2 ? 5 : -5), ny - 3);
+      ctx.lineTo(pole.dx + 4, ny + 3);
+      ctx.closePath();
+      ctx.fill();
+    }
+    // Tip on the ground
+    ctx.fillStyle = "#5f3f1f";
+    ctx.beginPath();
+    ctx.ellipse(pole.dx, pole.tip, 3.4, 2.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  ctx.restore();
+
+  drawCharacter(ctx, x, feetY, character, facing, elapsed, motion, speed, 1);
+}
+
+function drawPigBoulder(ctx: CanvasRenderingContext2D, boulder: Boulder) {
+  const top = boulderTop(boulder);
+  const cx = boulder.x + boulder.width / 2;
+  ctx.save();
+  ctx.fillStyle = "rgba(25,32,20,.28)";
+  ctx.beginPath();
+  ctx.ellipse(cx, PIG_GROUND_Y + 3, boulder.width * 0.75, 8, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  const rock = ctx.createLinearGradient(0, top, 0, PIG_GROUND_Y);
+  rock.addColorStop(0, "#9aa0a4");
+  rock.addColorStop(0.5, "#767c82");
+  rock.addColorStop(1, "#4d5157");
+  ctx.fillStyle = rock;
+  ctx.beginPath();
+  ctx.moveTo(boulder.x - 6, PIG_GROUND_Y + 4);
+  ctx.quadraticCurveTo(boulder.x - 14, top + 16, boulder.x + boulder.width * 0.28, top + 2);
+  ctx.quadraticCurveTo(cx, top - 8, boulder.x + boulder.width * 0.74, top + 3);
+  ctx.quadraticCurveTo(boulder.x + boulder.width + 14, top + 18, boulder.x + boulder.width + 6, PIG_GROUND_Y + 4);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = "rgba(255,255,255,.16)";
+  ctx.beginPath();
+  ctx.ellipse(cx - boulder.width * 0.16, top + 20, boulder.width * 0.24, 12, -0.4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(35,38,42,.5)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cx - 6, top + 10);
+  ctx.lineTo(cx + 2, top + 30);
+  ctx.lineTo(cx - 8, PIG_GROUND_Y - 6);
+  ctx.stroke();
+  // A little moss on top
+  ctx.fillStyle = "#6f8a3f";
+  ctx.beginPath();
+  ctx.ellipse(cx + 6, top + 4, boulder.width * 0.2, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawPigHud(ctx: CanvasRenderingContext2D, game: GameState) {
+  const field = game.pig;
+
+  ctx.fillStyle = "rgba(38,30,18,.84)";
+  roundedRect(ctx, 18, 18, 250, 58, 12);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,240,200,.3)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.fillStyle = "rgba(255,242,207,.72)";
+  ctx.font = "900 10px Arial";
+  ctx.textAlign = "left";
+  ctx.fillText("STILT LEGS", 34, 38);
+  const barW = 216;
+  const fill = Math.max(0, field.stilt / PIG_MAX_STILT);
+  ctx.fillStyle = "rgba(255,245,215,.18)";
+  roundedRect(ctx, 34, 48, barW, 12, 6);
+  ctx.fill();
+  const low = field.stilt <= PIG_LOW_STILT;
+  ctx.fillStyle = field.stilt <= 0 ? "#ff5a45" : low ? "#ff9b4a" : "#b4ec6d";
+  roundedRect(ctx, 34, 48, Math.max(3, barW * fill), 12, 6);
+  ctx.fill();
+  for (let notch = 1; notch < 6; notch += 1) {
+    ctx.fillStyle = "rgba(38,30,18,.7)";
+    ctx.fillRect(34 + (barW * notch) / 6, 48, 1.5, 12);
+  }
+
+  ctx.fillStyle = "rgba(38,30,18,.84)";
+  roundedRect(ctx, WORLD_WIDTH - 18 - 250, 18, 250, 58, 12);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,240,200,.3)";
+  ctx.stroke();
+  ctx.fillStyle = "rgba(255,242,207,.72)";
+  ctx.font = "900 10px Arial";
+  ctx.fillText("CROSS THE VALLEY", WORLD_WIDTH - 18 - 234, 38);
+  const span = PIG_FINISH_X - PIG_PLAYER_START_X;
+  const progress = Math.max(0, Math.min(1, (field.furthest - PIG_PLAYER_START_X) / span));
+  ctx.fillStyle = "rgba(255,245,215,.18)";
+  roundedRect(ctx, WORLD_WIDTH - 18 - 234, 48, 216, 12, 6);
+  ctx.fill();
+  ctx.fillStyle = "#e4b34b";
+  roundedRect(ctx, WORLD_WIDTH - 18 - 234, 48, Math.max(3, 216 * progress), 12, 6);
+  ctx.fill();
+
+  if ((game.noticeTimer > 0 && game.notice) || field.biteFlash > 0) {
+    const flash = field.biteFlash > 0 && (!game.notice || game.noticeTimer <= 0);
+    const text = flash ? "CHOMP! — the pigs are biting your legs!" : game.notice;
+    const fade = flash ? Math.min(1, field.biteFlash / 0.4) : Math.min(1, game.noticeTimer / 0.4);
+    ctx.fillStyle = `rgba(120,30,22,${0.8 * fade})`;
+    roundedRect(ctx, 400, 90, 400, 36, 10);
+    ctx.fill();
+    ctx.strokeStyle = `rgba(255,176,138,${fade})`;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = `rgba(255,242,207,${fade})`;
+    ctx.font = "900 12px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText(text, 600, 113);
+  }
+}
+
+function drawPigWorld(
+  ctx: CanvasRenderingContext2D,
+  game: GameState,
+  activeCharacter: Character,
+) {
+  const { elapsed, player } = game;
+  const field = game.pig;
+  ctx.clearRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+
+  // Sky
+  const sky = ctx.createLinearGradient(0, 0, 0, WORLD_HEIGHT);
+  sky.addColorStop(0, "#bfe0f0");
+  sky.addColorStop(0.4, "#dcecdd");
+  sky.addColorStop(0.72, "#e9e2b8");
+  sky.addColorStop(1, "#cbb787");
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+
+  const sun = ctx.createRadialGradient(240, 150, 20, 240, 150, 220);
+  sun.addColorStop(0, "rgba(255,250,220,.95)");
+  sun.addColorStop(0.2, "rgba(255,240,180,.5)");
+  sun.addColorStop(1, "rgba(255,240,180,0)");
+  ctx.fillStyle = sun;
+  ctx.fillRect(20, 0, 440, 380);
+  ctx.fillStyle = "#fff6da";
+  ctx.beginPath();
+  ctx.arc(240, 150, 40, 0, Math.PI * 2);
+  ctx.fill();
+
+  for (let cloud = 0; cloud < 4; cloud += 1) {
+    const cx = ((cloud * 337 + elapsed * 8) % (WORLD_WIDTH + 260)) - 130;
+    const cy = 70 + cloud * 34;
+    ctx.fillStyle = "rgba(255,255,255,.7)";
+    for (const [dx, dy, r] of [[0, 0, 22], [24, 6, 18], [-24, 6, 17], [8, -8, 16]] as const) {
+      ctx.beginPath();
+      ctx.arc(cx + dx, cy + dy, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Distant valley walls / hills
+  const drawHills = (baseY: number, color: string, offset: number, height: number) => {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(-30, WORLD_HEIGHT);
+    ctx.lineTo(-30, baseY);
+    for (let x = -30; x <= WORLD_WIDTH + 90; x += 110) {
+      const crest = baseY - 30 - Math.abs(Math.sin((x + offset) * 0.006)) * height;
+      ctx.quadraticCurveTo(x + 55, crest, x + 110, baseY - 12);
+    }
+    ctx.lineTo(WORLD_WIDTH + 90, WORLD_HEIGHT);
+    ctx.closePath();
+    ctx.fill();
+  };
+  drawHills(300, "#8fb2a0", 40, 120);
+  drawHills(348, "#6f9a7f", 220, 96);
+  drawHills(392, "#54805f", 120, 74);
+
+  // Valley floor
+  const floor = ctx.createLinearGradient(0, 402, 0, WORLD_HEIGHT);
+  floor.addColorStop(0, "#93a94f");
+  floor.addColorStop(0.28, "#7d9b45");
+  floor.addColorStop(0.5, "#8a7440");
+  floor.addColorStop(1, "#5f4a2b");
+  ctx.fillStyle = floor;
+  ctx.fillRect(0, 402, WORLD_WIDTH, WORLD_HEIGHT - 402);
+
+  // Grass line where the pigs run
+  const grass = ctx.createLinearGradient(0, PIG_GROUND_Y - 20, 0, PIG_GROUND_Y + 10);
+  grass.addColorStop(0, "#8fb64c");
+  grass.addColorStop(1, "#5c8a37");
+  ctx.fillStyle = grass;
+  ctx.fillRect(0, PIG_GROUND_Y - 8, WORLD_WIDTH, 20);
+  for (let x = 6; x < WORLD_WIDTH; x += 15) {
+    const h = 6 + ((x * 7) % 9);
+    const sway = Math.sin(elapsed * 1.2 + x) * 1.6;
+    ctx.strokeStyle = x % 3 ? "#6f9a3c" : "#88b048";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x, PIG_GROUND_Y - 2);
+    ctx.lineTo(x + sway, PIG_GROUND_Y - 2 - h);
+    ctx.stroke();
+  }
+
+  // Scattered mud patches, pebbles and hoof-churned earth
+  for (let p = 0; p < 40; p += 1) {
+    const px = ((p * 173 + 40) % (WORLD_WIDTH - 40)) + 20;
+    const py = PIG_GROUND_Y + 12 + ((p * 53) % 46);
+    ctx.fillStyle = p % 3 ? "rgba(70,52,30,.5)" : "rgba(95,72,40,.5)";
+    ctx.beginPath();
+    ctx.ellipse(px, py, 6 + (p % 4) * 2, 3, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Boulders
+  field.boulders.forEach((boulder) => drawPigBoulder(ctx, boulder));
+
+  // Safe ledges (start and finish plateaus)
+  const drawLedge = (left: number, right: number, side: -1 | 1) => {
+    const width = right - left;
+    ctx.fillStyle = "#3f2f1f";
+    roundedRect(ctx, left - 8, PIG_GROUND_Y - 6, width + 16, WORLD_HEIGHT - PIG_GROUND_Y + 20, 12);
+    ctx.fill();
+    const earth = ctx.createLinearGradient(0, PIG_GROUND_Y, 0, WORLD_HEIGHT);
+    earth.addColorStop(0, "#8a6a44");
+    earth.addColorStop(0.4, "#5f4630");
+    earth.addColorStop(1, "#33261c");
+    ctx.fillStyle = earth;
+    roundedRect(ctx, left - 4, PIG_GROUND_Y - 2, width + 8, WORLD_HEIGHT - PIG_GROUND_Y + 20, 10);
+    ctx.fill();
+    const cap = ctx.createLinearGradient(0, PIG_GROUND_Y - 14, 0, PIG_GROUND_Y + 6);
+    cap.addColorStop(0, "#9ac24f");
+    cap.addColorStop(1, "#5c8a37");
+    ctx.fillStyle = cap;
+    roundedRect(ctx, left - 6, PIG_GROUND_Y - 12, width + 12, 22, 10);
+    ctx.fill();
+    for (let x = left; x < right; x += 16) {
+      drawLeaf(ctx, x, PIG_GROUND_Y - 6, 13 + (x % 4), -1.4 + Math.sin(elapsed * 0.8 + x) * 0.05, x % 3 ? "#6f9a44" : "#9bb14a");
+    }
+    // steep drop into the valley on the inner edge
+    const edge = side < 0 ? right : left;
+    ctx.fillStyle = "rgba(30,22,14,.35)";
+    ctx.beginPath();
+    ctx.moveTo(edge, PIG_GROUND_Y - 8);
+    ctx.lineTo(edge + side * 26, PIG_GROUND_Y - 8);
+    ctx.lineTo(edge, PIG_GROUND_Y + 40);
+    ctx.closePath();
+    ctx.fill();
+  };
+  drawLedge(-20, PIG_SAFE_LEFT, -1);
+  drawLedge(PIG_SAFE_RIGHT, WORLD_WIDTH + 20, 1);
+
+  // Trail sign on the far ledge
+  ctx.fillStyle = "#593b22";
+  roundedRect(ctx, 1120, PIG_GROUND_Y - 96, 14, 96, 4);
+  ctx.fill();
+  ctx.fillStyle = "#e1a644";
+  roundedRect(ctx, 1074, PIG_GROUND_Y - 118, 116, 50, 7);
+  ctx.fill();
+  ctx.strokeStyle = "#8d5529";
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.fillStyle = "#3a281c";
+  ctx.font = "800 15px Arial";
+  ctx.textAlign = "center";
+  ctx.fillText("TRAIL →", 1132, PIG_GROUND_Y - 88);
+
+  // Pigs
+  const chasingAny = field.pigs.some((pig) => pig.state === "chase");
+  field.pigs.forEach((pig) => drawPig(ctx, pig, elapsed, pig.state === "chase"));
+
+  // Companion cheering from the start ledge
+  const companion: Character = activeCharacter === "guto" ? "nanda" : "guto";
+  drawCharacter(ctx, 60, PIG_GROUND_Y, companion, 1, elapsed, player.x > PIG_SAFE_LEFT ? "wave" : "idle", 0, 0.9);
+  if (player.x > PIG_SAFE_LEFT && !field.lost && !field.won) {
+    const bubbleY = PIG_GROUND_Y - 150 + Math.sin(elapsed * 2.8) * 2;
+    ctx.fillStyle = "rgba(247,232,186,.92)";
+    roundedRect(ctx, 14, bubbleY, 132, 32, 12);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(46, bubbleY + 30);
+    ctx.lineTo(54, bubbleY + 41);
+    ctx.lineTo(62, bubbleY + 30);
+    ctx.fill();
+    ctx.fillStyle = "#7a3320";
+    ctx.font = "800 11px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("BE QUICK!", 80, bubbleY + 20);
+  }
+
+  // The stilt-walking explorer
+  if (field.lost) {
+    // Stilts snapped — the walker tumbles among the pigs
+    const fallenY = PIG_GROUND_Y - PIG_STILT_HEIGHT * (1 - field.fallProgress);
+    drawStiltWalker(
+      ctx,
+      player.x,
+      Math.min(PIG_GROUND_Y, player.y),
+      activeCharacter,
+      player.facing,
+      elapsed,
+      field.fallProgress > 0.4 ? "fall" : "idle",
+      0,
+      1 - field.stilt / PIG_MAX_STILT,
+    );
+    ctx.fillStyle = "#ff5a45";
+    ctx.font = "900 22px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("CAUGHT!", player.x, fallenY - 20);
+  } else {
+    const motion: CharacterMotion = !player.onGround ? (player.vy < 0 ? "jump" : "fall") : "idle";
+    drawStiltWalker(
+      ctx,
+      player.x,
+      player.y,
+      activeCharacter,
+      player.facing,
+      elapsed,
+      motion,
+      player.vx,
+      1 - field.stilt / PIG_MAX_STILT,
+    );
+    if (field.stilt <= PIG_LOW_STILT && !field.won) {
+      const pulse = (Math.sin(elapsed * 12) + 1) / 2;
+      ctx.fillStyle = `rgba(255,90,69,${0.6 + pulse * 0.35})`;
+      ctx.font = "900 13px Arial";
+      ctx.textAlign = "center";
+      ctx.fillText("STILTS CRACKING!", player.x, player.y - PIG_STILT_HEIGHT - 96);
+    }
+  }
+  void chasingAny;
+
+  drawPigHud(ctx, game);
+
+  if (!game.running && !game.won && !game.lost) {
+    ctx.fillStyle = "rgba(5,29,27,.18)";
+    ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+  }
+}
+
 export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<GameState>(makeGame(1));
@@ -3834,6 +4394,7 @@ export default function Home() {
   const [eagleLoss, setEagleLoss] = useState<EagleLossReason | null>(null);
   const [hippoLoss, setHippoLoss] = useState<HippoLossReason | null>(null);
   const [snakeLoss, setSnakeLoss] = useState<SnakeLossReason | null>(null);
+  const [pigLoss, setPigLoss] = useState<PigLossReason | null>(null);
   const snakeSeedRef = useRef(0);
 
   useEffect(() => {
@@ -3892,6 +4453,7 @@ export default function Home() {
     setEagleLoss(null);
     setHippoLoss(null);
     setSnakeLoss(null);
+    setPigLoss(null);
     setCourseStatus(
       byCourse(
         activeCourse,
@@ -3900,6 +4462,7 @@ export default function Home() {
         "Grab a rodent with SPACE, then cross the clearing",
         "Walk to the edge — SPACE hops, hold Z + SPACE leaps",
         "Hop forward with → — roots are safe, snakes are not",
+        "Run across on the stilts — hold Z + SPACE to vault boulders",
       ),
     );
   }, [activeCourse]);
@@ -3939,6 +4502,7 @@ export default function Home() {
     setEagleLoss(null);
     setHippoLoss(null);
     setSnakeLoss(null);
+    setPigLoss(null);
     setCourseStatus(
       byCourse(
         course,
@@ -3947,6 +4511,7 @@ export default function Home() {
         "Grab a rodent with SPACE, then cross the clearing",
         "Walk to the edge — SPACE hops, hold Z + SPACE leaps",
         "Hop forward with → — roots are safe, snakes are not",
+        "Run across on the stilts — hold Z + SPACE to vault boulders",
       ),
     );
     window.setTimeout(() => {
@@ -4613,7 +5178,7 @@ export default function Home() {
               }
             }
           }
-        } else {
+        } else if (game.course === 5) {
           const maze = game.snake;
           const events = stepSnakeCourse(maze, dt);
           game.noticeTimer = Math.max(0, game.noticeTimer - dt);
@@ -4681,6 +5246,84 @@ export default function Home() {
                   : `Row ${row} / ${SNAKE_COLS} — on a root · ↑↓ walk it, → hops the next row`,
             );
           }
+        } else {
+          const valley = game.pig;
+          const events = stepPigCourse(
+            valley,
+            player,
+            { move, run: running, hold: grabbing },
+            dt,
+          );
+          game.noticeTimer = Math.max(0, game.noticeTimer - dt);
+          const notify = (text: string, seconds = 1.6) => {
+            game.notice = text;
+            game.noticeTimer = seconds;
+          };
+          events.forEach((event: PigEvent) => {
+            switch (event.type) {
+              case "hop":
+                setCourseStatus("Hopped — a hop dodges a bite, but won't clear a boulder");
+                playTone(360, 0.06, "square");
+                break;
+              case "vault":
+                setCourseStatus("Stilt vault!");
+                playTone(300, 0.07, "square");
+                window.setTimeout(() => playTone(520, 0.09, "square"), 70);
+                break;
+              case "land":
+                if (event.onBoulder) setCourseStatus("On top of the boulder — hop down and keep moving");
+                break;
+              case "blocked":
+                setCourseStatus("A boulder! Hold Z + SPACE to vault over it");
+                playTone(150, 0.08, "square");
+                break;
+              case "bite":
+                notify("CHOMP!", 0.9);
+                playTone(150, 0.14, "sawtooth");
+                window.setTimeout(() => playTone(110, 0.1, "sawtooth"), 40);
+                break;
+              case "warn":
+                setCourseStatus("Your stilts are cracking — RUN for the far side!");
+                playTone(200, 0.16, "sawtooth");
+                break;
+              case "won":
+                game.running = false;
+                game.won = true;
+                setOverlay("won");
+                setCourseStatus("Course clear!");
+                playTone(784, 0.16, "triangle");
+                window.setTimeout(() => playTone(1046, 0.22, "triangle"), 120);
+                break;
+              case "lost":
+                game.running = false;
+                game.lost = true;
+                setPigLoss(event.reason);
+                setOverlay("gameover");
+                setCourseStatus("The pigs chewed through your stilts");
+                playTone(105, 0.42, "sawtooth");
+                break;
+            }
+          });
+
+          statusTimer += dt;
+          if (statusTimer > 0.5 && events.length === 0 && !game.won && !game.lost) {
+            statusTimer = 0;
+            const nextBoulder = valley.boulders
+              .map((boulder) => boulder.x - player.x)
+              .filter((gap) => gap > 0 && gap < 150)
+              .sort((a, b) => a - b)[0];
+            setCourseStatus(
+              player.x <= PIG_SAFE_LEFT
+                ? "On the ledge — hold X and run across before the pigs swarm"
+                : player.x >= PIG_SAFE_RIGHT
+                  ? "Almost there — the trail is just ahead!"
+                  : nextBoulder !== undefined
+                    ? "Boulder ahead — hold Z + SPACE to vault it"
+                    : valley.stilt <= PIG_LOW_STILT
+                      ? `Stilts at ${Math.round((valley.stilt / PIG_MAX_STILT) * 100)}% — keep running!`
+                      : "Keep moving — the pigs are after your stilts",
+            );
+          }
         }
       } else {
         game.elapsed += dt * 0.35;
@@ -4690,7 +5333,8 @@ export default function Home() {
       else if (game.course === 2) drawMonkeyWorld(context, game, activeCharacter);
       else if (game.course === 3) drawEagleWorld(context, game, activeCharacter);
       else if (game.course === 4) drawHippoWorld(context, game, activeCharacter);
-      else drawSnakeWorld(context, game, activeCharacter);
+      else if (game.course === 5) drawSnakeWorld(context, game, activeCharacter);
+      else drawPigWorld(context, game, activeCharacter);
       animationFrame = window.requestAnimationFrame(update);
     };
 
@@ -4731,6 +5375,9 @@ export default function Home() {
         } else if (game.course === 4) {
           game.hippo.jumpPresses += 1;
           game.hippo.jumpWithHold = keysRef.current.has("KeyZ");
+        } else if (game.course === 6) {
+          game.pig.jumpPresses += 1;
+          game.pig.jumpWithHold = keysRef.current.has("KeyZ");
         } else if (game.course === 2 && player.onGround) {
           player.vy = -515;
           player.onGround = false;
@@ -4803,6 +5450,10 @@ export default function Home() {
     } else if (game.course === 4) {
       game.hippo.jumpPresses += 1;
       game.hippo.jumpWithHold = keysRef.current.has("KeyZ");
+    } else if (game.course === 6) {
+      // The touch VAULT button always primes a vault; a run-up carries it over a boulder.
+      game.pig.jumpPresses += 1;
+      game.pig.jumpWithHold = true;
     } else if (game.course === 2 && player.onGround) {
       player.vy = -515;
       player.onGround = false;
@@ -4862,7 +5513,7 @@ export default function Home() {
               <span>ENTER THE JUNGLE</span>
               <span aria-hidden="true">→</span>
             </button>
-            <small>COURSES 01–05 READY · FIVE JUNGLE CHALLENGES</small>
+            <small>COURSES 01–06 READY · SIX JUNGLE CHALLENGES</small>
           </div>
         </section>
       )}
@@ -4942,6 +5593,11 @@ export default function Home() {
               onClick={() => selectCourse(5)}
               type="button"
             >05 · SNAKES</button>
+            <button
+              className={activeCourse === 6 ? "selected" : ""}
+              onClick={() => selectCourse(6)}
+              type="button"
+            >06 · PIGS</button>
           </div>
           <p className="eyebrow">
             {byCourse(
@@ -4951,6 +5607,7 @@ export default function Home() {
               "COURSE 03 · EAGLE CLEARING",
               "COURSE 04 · HIPPO RIVER",
               "COURSE 05 · SLEEPING SNAKES",
+              "COURSE 06 · WILD PIG VALLEY",
             )}
           </p>
           <h1>
@@ -4961,6 +5618,7 @@ export default function Home() {
               "The Diving Eagles",
               "The Hippo Crossing",
               "The Sleeping Snakes",
+              "The Wild Pig Valley",
             )}
           </h1>
         </div>
@@ -4972,6 +5630,7 @@ export default function Home() {
             "A sunny clearing with no cover. Three hawk-eagles circle above, so carry a rodent, raise it when they dive, and never stop moving.",
             "Four hippos wallow between the banks. Every part of a hippo is a landing spot, but only the back forgives a pause — and one hippo likes to dive.",
             "Seen from above, the forest floor is a tangle of roots and sleeping vipers that look exactly alike. Hop one row at a time, wake them on purpose, and remember what you saw.",
+            "A valley of wild pigs. Strap on the pea-leg stilts and hurry across — the boars will bite through the wooden legs, and boulders block the way until you vault them.",
           )}
         </p>
       </section>
@@ -4985,6 +5644,7 @@ export default function Home() {
           "The Diving Eagles game",
           "The Hippo Crossing game",
           "The Sleeping Snakes game",
+          "The Wild Pig Valley game",
         )}
       >
         <div className="game-hud">
@@ -5016,6 +5676,7 @@ export default function Home() {
               "A side-scrolling clearing course. Cross an open meadow while three eagles dive, raising rodents overhead as shields and mashing free if caught.",
               "A side-scrolling river course. Hop across four hippos using short hops and charged long jumps, landing on heads and backs but never in a mouth.",
               "A top-down maze course. Hop across twenty rows of roots and sleeping snakes that look identical, waking snakes briefly to memorize a safe path.",
+              "A side-scrolling valley course. Run across on wooden stilts, vaulting boulders with Z and Space while wild pigs chase and bite through the stilt legs.",
             )}
           />
 
@@ -5032,6 +5693,7 @@ export default function Home() {
                       "● EAGLES CIRCLING",
                       "● HIPPOS RESTLESS",
                       "● SNAKES SLEEPING",
+                      "● WILD PIGS ROAMING",
                     )}
                   </span>
                 </div>
@@ -5047,8 +5709,10 @@ export default function Home() {
                         <>Cross the clearing.<br />Feed the eagles, not yourself.</>
                       ) : activeCourse === 4 ? (
                         <>Hop the river.<br />Never land in a mouth.</>
-                      ) : (
+                      ) : activeCourse === 5 ? (
                         <>Cross twenty rows.<br />Remember the snakes.</>
+                      ) : (
+                        <>Cross the valley.<br />Outrun the wild pigs.</>
                       )}
                     </h2>
                     <p>
@@ -5070,11 +5734,16 @@ export default function Home() {
                         <strong>head</strong> (leave in under a second), and a <strong>back</strong>{" "}
                         (rest a moment, then go). <strong>SPACE</strong> hops a short arc; hold{" "}
                         <strong>Z</strong> to charge, then SPACE to leap straight to the next back.</>
-                      ) : (
+                      ) : activeCourse === 5 ? (
                         <>From above, roots and sleeping snakes look the same. Hop forward one row
                         with <strong>→</strong>. Land on a snake and <strong>every snake wakes</strong>{" "}
                         for a moment — hop to a root (or straight back) before it bites. Roots are
                         safe forever: walk along them with <strong>↑↓</strong> to line up the next hop.</>
+                      ) : (
+                        <>Balance on the pea-leg stilts and <strong>hurry across the valley</strong>.
+                        Wild pigs chase you and <strong>bite the wooden legs</strong> — take too many bites and
+                        the stilts snap. Hold <strong>X</strong> to run, and press <strong>Z + SPACE</strong>{" "}
+                        to vault the boulders in your way.</>
                       )}
                     </p>
 
@@ -5111,15 +5780,15 @@ export default function Home() {
                     <div className="control-row">
                       <span className="key-pair"><kbd>←→</kbd>{(activeCourse === 1 || activeCourse === 5) && <kbd>↑↓</kbd>}</span>
                       <span>
-                        <b>{byCourse(activeCourse, "Move / climb", "Move / steer", "Move", "Walk", "Hop a row")}</b>
-                        <small>{byCourse(activeCourse, "Steer in air, climb on a vine", "Control every jump in the air", "Walk the clearing, chase rodents", "Position yourself on a back or the bank edge", "Forward or back, onto whatever is there")}</small>
+                        <b>{byCourse(activeCourse, "Move / climb", "Move / steer", "Move", "Walk", "Hop a row", "Move / run")}</b>
+                        <small>{byCourse(activeCourse, "Steer in air, climb on a vine", "Control every jump in the air", "Walk the clearing, chase rodents", "Position yourself on a back or the bank edge", "Forward or back, onto whatever is there", "Cross the valley, steer in the air")}</small>
                       </span>
                     </div>
                     <div className="control-row">
                       <span className="wide-key"><kbd>SPACE</kbd></span>
                       <span>
-                        <b>{byCourse(activeCourse, "Jump / release", "Jump / stomp", "Grab / drop / struggle", "Short hop", "Hop forward")}</b>
-                        <small>{byCourse(activeCourse, "Leap at the swing’s edge", "Land on monkeys to make them dizzy", "Pick up what’s nearest; mash to break free", "Bank → mouth or head · head → back · back → next head", "Same as →, one row at a time")}</small>
+                        <b>{byCourse(activeCourse, "Jump / release", "Jump / stomp", "Grab / drop / struggle", "Short hop", "Hop forward", "Hop")}</b>
+                        <small>{byCourse(activeCourse, "Leap at the swing’s edge", "Land on monkeys to make them dizzy", "Pick up what’s nearest; mash to break free", "Bank → mouth or head · head → back · back → next head", "Same as →, one row at a time", "A quick hop dodges a bite (but not a boulder)")}</small>
                       </span>
                     </div>
                     {activeCourse === 1 && (
@@ -5146,10 +5815,16 @@ export default function Home() {
                         <span><b>Walk along the root</b><small>Only where the same root continues</small></span>
                       </div>
                     )}
+                    {activeCourse === 6 && (
+                      <div className="control-row important-control">
+                        <span className="key-pair"><kbd>Z</kbd><kbd>SPACE</kbd></span>
+                        <span><b>Stilt vault</b><small>Hold Z and press SPACE to clear a boulder</small></span>
+                      </div>
+                    )}
                     {activeCourse !== 4 && activeCourse !== 5 && (
                       <div className="control-row">
                         <span className="wide-key"><kbd>X</kbd></span>
-                        <span><b>Run</b><small>{activeCourse === 3 ? "Not while a rodent is raised" : "Build a longer jump"}</small></span>
+                        <span><b>Run</b><small>{activeCourse === 3 ? "Not while a rodent is raised" : activeCourse === 6 ? "Be quick — outrun the pigs" : "Build a longer jump"}</small></span>
                       </div>
                     )}
                     <div className="field-tip">
@@ -5163,6 +5838,7 @@ export default function Home() {
                           "Eagles only take what is raised above your head. Fruit never scares them — eat it with Z for health, or drop it and grab a rodent.",
                           "Stand at the rear of a back before a short hop, or it lands in the next mouth. Hold Z until the meter is green, then SPACE for a long jump straight to the next back.",
                           "Stepping on a snake and hopping straight back to your root is always safe — use it to peek at every snake in the maze, then memorize the way.",
+                          "A hop or a vault lifts the stilts off the ground, and pigs can only bite while the legs are planted. Keep running — a pig you pass can never catch a runner from behind.",
                         )}
                       </p>
                     </div>
@@ -5172,7 +5848,7 @@ export default function Home() {
                   <span>
                     {hasStarted
                       ? "RESUME COURSE"
-                      : byCourse(activeCourse, "BEGIN CROSSING", "BEGIN THE CLIMB", "BRAVE THE SKIES", "HOP THE RIVER", "ENTER THE TANGLE")}
+                      : byCourse(activeCourse, "BEGIN CROSSING", "BEGIN THE CLIMB", "BRAVE THE SKIES", "HOP THE RIVER", "ENTER THE TANGLE", "BRAVE THE VALLEY")}
                   </span>
                   <span aria-hidden="true">→</span>
                 </button>
@@ -5183,7 +5859,7 @@ export default function Home() {
           {overlay === "gameover" && (
             <div className="game-overlay result-overlay" role="dialog" aria-modal="true" aria-labelledby="gameover-title">
               <div className="result-card">
-                <span className="result-icon" aria-hidden="true">{byCourse(activeCourse, "〰", "▲", "▼", "💦", "〽")}</span>
+                <span className="result-icon" aria-hidden="true">{byCourse(activeCourse, "〰", "▲", "▼", "💦", "〽", "🐗")}</span>
                 <p className="eyebrow">THE JUNGLE GOT YOU</p>
                 <h2 id="gameover-title">
                   {byCourse(
@@ -5203,6 +5879,9 @@ export default function Home() {
                     snakeLoss === "instant"
                       ? "That snake was already awake!"
                       : "Too slow — bitten!",
+                    pigLoss === "stilts"
+                      ? "The pigs chewed through your stilts!"
+                      : "The pigs got you!",
                   )}
                 </h2>
                 <p>
@@ -5223,6 +5902,7 @@ export default function Home() {
                     snakeLoss === "instant"
                       ? "While the snakes are awake, every snake bites on contact. From a snake, only hop onto a root — or straight back to where you came from."
                       : "A woken snake bites in a blink. Hop off the moment you land on one, and remember which bands showed their heads. The maze stays the same when you retry.",
+                    "The stilts only take so many bites. Hold X to run, hop or vault to lift the legs clear, and never stop for long — a boulder you can't vault is a trap when the pigs close in.",
                   )}
                 </p>
                 <button className="primary-button compact" onClick={restartCourse} type="button">
@@ -5245,7 +5925,8 @@ export default function Home() {
                     "The monkeys are dizzy and the far trail is safe. Past the trees, hawk-eagles circle a sunny clearing.",
                     "The eagles are fed and the trail winds on. Downriver, four hippos wallow across the only ford.",
                     "Four hippos hopped and not a splash. Deeper in, the forest floor is a tangle of roots and sleeping snakes.",
-                    "Twenty rows of vipers and not one bite. The Canopy Chorus echoes somewhere above.",
+                    "Twenty rows of vipers and not one bite. Beyond the trees the ground drops into a valley where wild pigs root and squeal.",
+                    "Across the valley on wobbling stilts, and not a single boar caught you. Somewhere ahead a gentle giant guards the way.",
                   )}
                 </p>
                 <div className="result-actions">
@@ -5264,6 +5945,10 @@ export default function Home() {
                   ) : activeCourse === 4 ? (
                     <button className="primary-button compact" onClick={() => selectCourse(5)} type="button">
                       PLAY COURSE 05 <span aria-hidden="true">→</span>
+                    </button>
+                  ) : activeCourse === 5 ? (
+                    <button className="primary-button compact" onClick={() => selectCourse(6)} type="button">
+                      PLAY COURSE 06 <span aria-hidden="true">→</span>
                     </button>
                   ) : (
                     <button className="primary-button compact" onClick={() => document.querySelector("#expedition")?.scrollIntoView({ behavior: "smooth" })} type="button">
@@ -5319,19 +6004,19 @@ export default function Home() {
           <div>
             <button
               className="grab-touch"
-              onPointerDown={() => pressControl(activeCourse === 2 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : "KeyZ")}
-              onPointerUp={() => releaseControl(activeCourse === 2 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : "KeyZ")}
-              onPointerCancel={() => releaseControl(activeCourse === 2 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : "KeyZ")}
-              onPointerLeave={() => releaseControl(activeCourse === 2 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : "KeyZ")}
-              aria-label={byCourse(activeCourse, "Grab and hold vine", "Run", "Raise rodent or eat fruit", "Hold to charge a long jump", "Hop back a row")}
+              onPointerDown={() => pressControl(activeCourse === 2 || activeCourse === 6 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : "KeyZ")}
+              onPointerUp={() => releaseControl(activeCourse === 2 || activeCourse === 6 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : "KeyZ")}
+              onPointerCancel={() => releaseControl(activeCourse === 2 || activeCourse === 6 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : "KeyZ")}
+              onPointerLeave={() => releaseControl(activeCourse === 2 || activeCourse === 6 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : "KeyZ")}
+              aria-label={byCourse(activeCourse, "Grab and hold vine", "Run", "Raise rodent or eat fruit", "Hold to charge a long jump", "Hop back a row", "Run to outrun the pigs")}
               type="button"
-            >{byCourse(activeCourse, "GRAB", "RUN", "RAISE", "CHARGE", "BACK")}</button>
+            >{byCourse(activeCourse, "GRAB", "RUN", "RAISE", "CHARGE", "BACK", "RUN")}</button>
             <button
               className="jump-touch"
               onPointerDown={tapJump}
-              aria-label={byCourse(activeCourse, "Jump or release vine", "Jump or stomp", "Grab, drop, or struggle", "Hop, or leap while charging", "Hop forward a row")}
+              aria-label={byCourse(activeCourse, "Jump or release vine", "Jump or stomp", "Grab, drop, or struggle", "Hop, or leap while charging", "Hop forward a row", "Vault over a boulder")}
               type="button"
-            >{activeCourse === 3 ? "GRAB" : activeCourse === 5 ? "HOP" : "JUMP"}</button>
+            >{activeCourse === 3 ? "GRAB" : activeCourse === 5 ? "HOP" : activeCourse === 6 ? "VAULT" : "JUMP"}</button>
           </div>
         </div>
       </section>
@@ -5365,12 +6050,19 @@ export default function Home() {
             <div><kbd className="long accent">Z + SPACE</kbd><span><b>LONG JUMP</b> Charge, then leap to the next back</span></div>
             <div><kbd className="long">MOUTH</kbd><span><b>NEVER SAFE</b> Heads shake, backs dive</span></div>
           </>
-        ) : (
+        ) : activeCourse === 5 ? (
           <>
             <div><kbd>←→</kbd><span><b>HOP A ROW</b> Forward or back, one row only</span></div>
             <div><kbd className="long">SPACE</kbd><span><b>HOP FORWARD</b> Same as →</span></div>
             <div><kbd className="long accent">↑↓</kbd><span><b>WALK THE ROOT</b> Roots are always safe</span></div>
             <div><kbd className="long">BLINK</kbd><span><b>SNAKES BITE</b> Hop off the instant you land</span></div>
+          </>
+        ) : (
+          <>
+            <div><kbd>←→</kbd><span><b>MOVE</b> Cross the valley on stilts</span></div>
+            <div><kbd className="long">SPACE</kbd><span><b>HOP</b> A quick hop dodges a bite</span></div>
+            <div><kbd className="long accent">Z + SPACE</kbd><span><b>VAULT</b> Clear the boulders</span></div>
+            <div><kbd className="long">X</kbd><span><b>RUN</b> Be quick — outrun the pigs</span></div>
           </>
         )}
       </section>
@@ -5391,11 +6083,11 @@ export default function Home() {
           {courses.map((course, index) => (
             <button
               className={`course-card ${index === activeCourse - 1 ? "current" : ""}`}
-              disabled={index > 4}
+              disabled={index > 5}
               key={course.number}
               onClick={() => selectCourse((index + 1) as CourseNumber)}
               type="button"
-              aria-label={index < 5 ? `Play course ${course.number}: ${course.title}` : `${course.title} is planned`}
+              aria-label={index < 6 ? `Play course ${course.number}: ${course.title}` : `${course.title} is planned`}
             >
               <div className="course-card-top">
                 <span className="course-number">{course.number}</span>
