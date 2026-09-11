@@ -268,18 +268,20 @@ test("wires The Piranha River into the page", async () => {
   assert.match(source, /game\.river\.jumpPresses \+= 1/);
   assert.match(source, /drawRiverWorld\(context, game, activeCharacter\)/);
   assert.match(source, /07 · PIRANHAS/);
-  assert.match(source, /stepRiverCourse\(river, player, \{ move, aim \}, dt\)/);
-  assert.match(course, /export const RIVER_CURRENT = 40;/);
-  assert.match(course, /export const RIVER_SPIN_MAX = 6\.2;/);
+  assert.match(source, /stepRiverCourse\(river, player, \{ moveX: move, moveY:/);
+  assert.match(course, /export const RIVER_CURRENT = 62;/);
+  assert.match(course, /export const RIVER_MIN_DRIFT = 40;/);
   assert.match(course, /export const RIVER_WATERFALL_Y = 556;/);
   assert.match(course, /lossReason: RiverLossReason \| null;/);
+  // The current always wins: even a fully-spun log still sinks.
+  assert.match(course, /Math\.max\(RIVER_MIN_DRIFT, RIVER_CURRENT \+ thrust \* log\.roll\.y\)/);
 
   const kindsStart = course.indexOf("export const riverRollKinds = [");
   const kindsEnd = course.indexOf("] as const;", kindsStart);
   const kinds = course.slice(kindsStart, kindsEnd).match(/roll: \{/g)?.length ?? 0;
   assert.equal(kinds, 4, "the river floats four kinds of log");
 
-  for (const renderer of ["drawRiverLog", "drawRiverHud", "drawRiverWorld"]) {
+  for (const renderer of ["drawRiverLog", "drawPiranha", "drawRiverHud", "drawRiverWorld"]) {
     const start = source.indexOf(`function ${renderer}(`);
     assert.notEqual(start, -1, `${renderer} should exist`);
     const end = source.indexOf("\nfunction ", start + 1);
