@@ -80,10 +80,30 @@ import {
   type PigEvent,
   type PigLossReason,
 } from "./pig-course";
+import {
+  RIVER_CURRENT,
+  RIVER_LEFT_BANK,
+  RIVER_RIGHT_BANK,
+  RIVER_SPIN_MAX,
+  RIVER_START_X,
+  RIVER_START_Y,
+  RIVER_TOP,
+  RIVER_WATERFALL_Y,
+  logAxisAngle,
+  makeRiverCourse,
+  ridingLog,
+  riverHeadroom,
+  riverProgress,
+  stepRiverCourse,
+  type RiverCourseState,
+  type RiverEvent,
+  type RiverLog,
+  type RiverLossReason,
+} from "./river-course";
 
 type Character = "guto" | "nanda";
 type Overlay = "briefing" | "gameover" | "won" | null;
-type CourseNumber = 1 | 2 | 3 | 4 | 5 | 6;
+type CourseNumber = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 type Vine = {
   x: number;
@@ -140,6 +160,7 @@ type GameState = {
   hippo: HippoCourseState;
   snake: SnakeCourseState;
   pig: PigCourseState;
+  river: RiverCourseState;
   notice: string;
   noticeTimer: number;
   running: boolean;
@@ -258,12 +279,12 @@ const courses = [
   },
   {
     number: "07",
-    animal: "Gorilla",
-    title: "The Gentle Giant",
-    skill: "Roll & share",
-    icon: "🦍",
-    status: "PLANNED",
-    description: "Roll fruit onto feeding platforms to clear a peaceful way forward.",
+    animal: "Piranhas",
+    title: "The Piranha River",
+    skill: "Spin & hop",
+    icon: "🐟",
+    status: "PLAYABLE",
+    description: "Roll floating logs across a river that flows toward a waterfall. Spin the right log the right way, hop between them, and never fall in with the piranhas.",
   },
   {
     number: "08",
@@ -276,7 +297,7 @@ const courses = [
   },
 ];
 
-function byCourse<T>(course: CourseNumber, one: T, two: T, three: T, four: T, five: T, six: T): T {
+function byCourse<T>(course: CourseNumber, one: T, two: T, three: T, four: T, five: T, six: T, seven: T): T {
   return course === 1
     ? one
     : course === 2
@@ -287,7 +308,9 @@ function byCourse<T>(course: CourseNumber, one: T, two: T, three: T, four: T, fi
           ? four
           : course === 5
             ? five
-            : six;
+            : course === 6
+              ? six
+              : seven;
 }
 
 function makeGame(course: CourseNumber = 1, snakeSeed = 5): GameState {
@@ -309,8 +332,8 @@ function makeGame(course: CourseNumber = 1, snakeSeed = 5): GameState {
   return {
     course,
     player: {
-      x: course === 3 ? 105 : course === 4 ? HIPPO_PLAYER_START_X : course === 6 ? PIG_PLAYER_START_X : 125,
-      y: byCourse(course, GROUND_Y, MONKEY_GROUND_Y, EAGLE_GROUND_Y, HIPPO_BANK_Y, SNAKE_GRID_Y + SNAKE_CELL_H * 2.5, PIG_LEDGE_Y),
+      x: course === 3 ? 105 : course === 4 ? HIPPO_PLAYER_START_X : course === 6 ? PIG_PLAYER_START_X : course === 7 ? RIVER_START_X : 125,
+      y: byCourse(course, GROUND_Y, MONKEY_GROUND_Y, EAGLE_GROUND_Y, HIPPO_BANK_Y, SNAKE_GRID_Y + SNAKE_CELL_H * 2.5, PIG_LEDGE_Y, RIVER_START_Y),
       vx: 0,
       vy: 0,
       facing: 1,
@@ -330,6 +353,7 @@ function makeGame(course: CourseNumber = 1, snakeSeed = 5): GameState {
     hippo: makeHippoCourse(Math.floor(Math.random() * 1e9)),
     snake: course === 5 ? makeSnakeCourse(snakeSeed) : makeSnakeCourse(1),
     pig: makePigCourse(Math.floor(Math.random() * 1e9)),
+    river: makeRiverCourse(Math.floor(Math.random() * 1e9)),
     notice: "",
     noticeTimer: 0,
     running: false,
@@ -4561,6 +4585,482 @@ function drawPigWorld(
   }
 }
 
+function drawRiverLog(
+  ctx: CanvasRenderingContext2D,
+  log: RiverLog,
+  elapsed: number,
+  ridden: boolean,
+  highlighted: boolean,
+) {
+  const angle = logAxisAngle(log);
+  const half = log.length / 2;
+  const r = log.radius;
+  const bobLift = Math.sin(log.bob) * 1.6;
+
+  ctx.save();
+  ctx.translate(log.x, log.y + bobLift);
+
+  // Wake / shadow on the water beneath the log
+  ctx.fillStyle = "rgba(6,42,52,.28)";
+  ctx.save();
+  ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.ellipse(3, 5, half + 6, r + 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  if (highlighted) {
+    ctx.save();
+    ctx.rotate(angle);
+    const pulse = (Math.sin(elapsed * 7) + 1) / 2;
+    ctx.strokeStyle = `rgba(255,236,150,${0.5 + pulse * 0.4})`;
+    ctx.lineWidth = 3;
+    roundedRect(ctx, -half - 7, -r - 7, log.length + 14, r * 2 + 14, r + 7);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  ctx.rotate(angle);
+
+  // The barrel of the log, shaded across its thickness for a round read
+  const barrel = ctx.createLinearGradient(0, -r, 0, r);
+  barrel.addColorStop(0, ridden ? "#c99a5f" : "#b98a52");
+  barrel.addColorStop(0.5, ridden ? "#a06f3c" : "#8f6234");
+  barrel.addColorStop(1, "#5f3d20");
+  ctx.fillStyle = barrel;
+  roundedRect(ctx, -half, -r, log.length, r * 2, r);
+  ctx.fill();
+  // A lighter highlight band along the top of the barrel
+  ctx.fillStyle = "rgba(255,236,196,.28)";
+  roundedRect(ctx, -half + 4, -r + 2, log.length - 8, r * 0.7, r * 0.35);
+  ctx.fill();
+  // Bark grooves running the length
+  ctx.strokeStyle = "rgba(74,48,26,.5)";
+  ctx.lineWidth = 1.4;
+  for (const gy of [-r * 0.45, 0, r * 0.5]) {
+    ctx.beginPath();
+    ctx.moveTo(-half + 6, gy);
+    ctx.lineTo(half - 6, gy);
+    ctx.stroke();
+  }
+
+  // The end grain at both ends, with a spinning mark that reads as roll
+  const phase = ridden ? log.spin * elapsed * 1.4 : log.bob * 0.2;
+  for (const end of [-1, 1] as const) {
+    ctx.save();
+    ctx.translate(end * half, 0);
+    const grain = ctx.createRadialGradient(0, 0, 1, 0, 0, r);
+    grain.addColorStop(0, "#e0b878");
+    grain.addColorStop(0.6, "#c39a5c");
+    grain.addColorStop(1, "#7a5027");
+    ctx.fillStyle = grain;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, r * 0.72, r, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(90,58,30,.55)";
+    ctx.lineWidth = 1;
+    for (const rr of [0.34, 0.62, 0.9]) {
+      ctx.beginPath();
+      ctx.ellipse(0, 0, r * 0.72 * rr, r * rr, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    // The rolling mark
+    ctx.strokeStyle = "rgba(70,44,22,.85)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(Math.cos(phase) * r * 0.62, Math.sin(phase) * r * 0.92);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Spin speed arcs curling off the leading edge
+  if (ridden && Math.abs(log.spin) > 0.4) {
+    const dir = Math.sign(log.spin);
+    const arcs = Math.min(3, Math.floor(Math.abs(log.spin)));
+    ctx.strokeStyle = "rgba(226,246,255,.7)";
+    ctx.lineWidth = 2;
+    for (let i = 0; i < arcs; i += 1) {
+      const rad = r + 5 + i * 5;
+      ctx.beginPath();
+      ctx.arc(half - 4, 0, rad * 0.5, -0.7 * dir, 0.7 * dir, dir < 0);
+      ctx.stroke();
+    }
+  }
+
+  ctx.restore();
+}
+
+function drawRiverHud(ctx: CanvasRenderingContext2D, game: GameState) {
+  const river = game.river;
+  const player = game.player;
+  const log = ridingLog(river);
+  const headroom = river.onBank === "start" ? 1 : riverHeadroom(player.y);
+
+  // Left panel: how much room is left before the falls
+  ctx.fillStyle = "rgba(10,34,40,.84)";
+  roundedRect(ctx, 18, 18, 250, 64, 12);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(190,236,255,.3)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.fillStyle = "rgba(214,240,255,.72)";
+  ctx.font = "900 10px Arial";
+  ctx.textAlign = "left";
+  ctx.fillText("DISTANCE TO FALLS", 34, 38);
+  ctx.textAlign = "right";
+  ctx.fillStyle = headroom < 0.32 ? "#ff6b52" : "rgba(214,240,255,.55)";
+  ctx.fillText(headroom < 0.32 ? "ALMOST OVER!" : "SAFE", 250, 38);
+  ctx.fillStyle = "rgba(200,235,255,.18)";
+  roundedRect(ctx, 34, 48, 216, 12, 6);
+  ctx.fill();
+  ctx.fillStyle = headroom < 0.32 ? "#ff5a45" : headroom < 0.55 ? "#ffb54a" : "#6fe0c0";
+  roundedRect(ctx, 34, 48, Math.max(3, 216 * headroom), 12, 6);
+  ctx.fill();
+  ctx.fillStyle = "#e8f7ff";
+  ctx.fillRect(34 + 216 * 0.32 - 1, 44, 2, 20);
+
+  // Centre gauge: the managed spin velocity of the log you are on
+  const gaugeX = WORLD_WIDTH / 2 - 118;
+  const gaugeW = 236;
+  ctx.fillStyle = "rgba(10,34,40,.8)";
+  roundedRect(ctx, gaugeX, 18, gaugeW, 52, 12);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(190,236,255,.28)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.fillStyle = "rgba(214,240,255,.7)";
+  ctx.font = "900 9px Arial";
+  ctx.textAlign = "center";
+  ctx.fillText("◀ BACK-SPIN     LOG SPIN     FORWARD ▶", WORLD_WIDTH / 2, 34);
+  const trackX = gaugeX + 18;
+  const trackW = gaugeW - 36;
+  ctx.fillStyle = "rgba(200,235,255,.16)";
+  roundedRect(ctx, trackX, 46, trackW, 12, 6);
+  ctx.fill();
+  const midX = trackX + trackW / 2;
+  ctx.fillStyle = "rgba(232,247,255,.5)";
+  ctx.fillRect(midX - 1, 42, 2, 20);
+  const spin = log ? log.spin : 0;
+  const spinFrac = Math.max(-1, Math.min(1, spin / RIVER_SPIN_MAX));
+  const spinW = (trackW / 2) * Math.abs(spinFrac);
+  ctx.fillStyle = spin >= 0 ? "#59c8ff" : "#ffb54a";
+  if (spin >= 0) {
+    roundedRect(ctx, midX, 46, Math.max(2, spinW), 12, 6);
+  } else {
+    roundedRect(ctx, midX - Math.max(2, spinW), 46, Math.max(2, spinW), 12, 6);
+  }
+  ctx.fill();
+
+  // Right panel: crossing progress
+  ctx.fillStyle = "rgba(10,34,40,.84)";
+  roundedRect(ctx, WORLD_WIDTH - 18 - 250, 18, 250, 64, 12);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(190,236,255,.3)";
+  ctx.stroke();
+  ctx.fillStyle = "rgba(214,240,255,.72)";
+  ctx.font = "900 10px Arial";
+  ctx.textAlign = "left";
+  ctx.fillText("CROSS THE RIVER", WORLD_WIDTH - 18 - 234, 38);
+  const progress = riverProgress(river);
+  ctx.fillStyle = "rgba(200,235,255,.18)";
+  roundedRect(ctx, WORLD_WIDTH - 18 - 234, 48, 216, 12, 6);
+  ctx.fill();
+  ctx.fillStyle = "#7fe6a6";
+  roundedRect(ctx, WORLD_WIDTH - 18 - 234, 48, Math.max(3, 216 * progress), 12, 6);
+  ctx.fill();
+  ctx.font = "900 8px Arial";
+  ctx.fillStyle = "rgba(214,240,255,.6)";
+  ctx.fillText(`${river.hops} HOP${river.hops === 1 ? "" : "S"}`, WORLD_WIDTH - 18 - 234, 74);
+
+  if ((game.noticeTimer > 0 && game.notice) || river.splashFlash > 0) {
+    const flash = river.splashFlash > 0 && (!game.notice || game.noticeTimer <= 0);
+    const text = flash ? "SPLASH! — the piranhas are waiting" : game.notice;
+    const fade = flash ? Math.min(1, river.splashFlash / 0.6) : Math.min(1, game.noticeTimer / 0.4);
+    ctx.fillStyle = `rgba(18,60,72,${0.82 * fade})`;
+    roundedRect(ctx, 400, 92, 400, 36, 10);
+    ctx.fill();
+    ctx.strokeStyle = `rgba(150,220,255,${fade})`;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = `rgba(224,244,255,${fade})`;
+    ctx.font = "900 12px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText(text, 600, 115);
+  }
+}
+
+function drawRiverWorld(
+  ctx: CanvasRenderingContext2D,
+  game: GameState,
+  activeCharacter: Character,
+) {
+  const { elapsed, player } = game;
+  const river = game.river;
+  const companion: Character = activeCharacter === "guto" ? "nanda" : "guto";
+  ctx.clearRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+
+  // The river surface, flowing top to bottom
+  const water = ctx.createLinearGradient(0, 0, 0, WORLD_HEIGHT);
+  water.addColorStop(0, "#2f8fa3");
+  water.addColorStop(0.5, "#237f97");
+  water.addColorStop(0.82, "#1c6f89");
+  water.addColorStop(1, "#155a75");
+  ctx.fillStyle = water;
+  ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+
+  // Downstream ripple lines scrolling toward the falls
+  ctx.lineWidth = 2;
+  for (let row = 0; row < 22; row += 1) {
+    const y = ((row * 30 + elapsed * RIVER_CURRENT) % (WORLD_HEIGHT + 40)) - 20;
+    ctx.strokeStyle = `rgba(214,244,250,${0.05 + (row % 3) * 0.02})`;
+    ctx.beginPath();
+    for (let x = RIVER_LEFT_BANK - 10; x <= RIVER_RIGHT_BANK + 10; x += 40) {
+      const yy = y + Math.sin(x * 0.05 + row + elapsed) * 4;
+      if (x === RIVER_LEFT_BANK - 10) ctx.moveTo(x, yy);
+      else ctx.lineTo(x, yy);
+    }
+    ctx.stroke();
+  }
+  // Faster current streaks
+  for (let s = 0; s < 26; s += 1) {
+    const sx = RIVER_LEFT_BANK + 20 + ((s * 137) % (RIVER_RIGHT_BANK - RIVER_LEFT_BANK - 40));
+    const sy = ((s * 91 + elapsed * (RIVER_CURRENT + 30)) % (WORLD_HEIGHT + 60)) - 30;
+    ctx.strokeStyle = "rgba(230,248,252,.12)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(sx + Math.sin(s) * 3, sy + 16);
+    ctx.stroke();
+  }
+
+  // The source at the top: a foamy rock ledge the logs slide out from under
+  const source = ctx.createLinearGradient(0, 0, 0, RIVER_TOP + 8);
+  source.addColorStop(0, "#3a6f5a");
+  source.addColorStop(1, "rgba(58,111,90,0)");
+  ctx.fillStyle = source;
+  ctx.fillRect(RIVER_LEFT_BANK, 0, RIVER_RIGHT_BANK - RIVER_LEFT_BANK, RIVER_TOP + 8);
+  ctx.fillStyle = "rgba(236,252,255,.5)";
+  for (let x = RIVER_LEFT_BANK + 6; x < RIVER_RIGHT_BANK; x += 26) {
+    ctx.beginPath();
+    ctx.arc(x + Math.sin(x + elapsed) * 3, RIVER_TOP - 2, 7, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Piranhas prowling the open water
+  for (let f = 0; f < 12; f += 1) {
+    const baseX = RIVER_LEFT_BANK + 40 + ((f * 173) % (RIVER_RIGHT_BANK - RIVER_LEFT_BANK - 80));
+    const baseY = RIVER_TOP + 60 + ((f * 227) % (RIVER_WATERFALL_Y - RIVER_TOP - 90));
+    const fx = baseX + Math.sin(elapsed * 1.4 + f * 1.7) * 26;
+    const fy = baseY + Math.cos(elapsed * 0.9 + f) * 14 + elapsed * 6;
+    const wrappedY = RIVER_TOP + 50 + ((fy - RIVER_TOP - 50) % (RIVER_WATERFALL_Y - RIVER_TOP - 70));
+    // Skip fish that would sit under the player's log for readability
+    if (Math.hypot(fx - player.x, wrappedY - player.y) < 46) continue;
+    const dir = Math.sin(elapsed * 1.4 + f * 1.7) >= 0 ? 1 : -1;
+    ctx.save();
+    ctx.translate(fx, wrappedY);
+    ctx.scale(dir, 1);
+    ctx.fillStyle = "rgba(28,54,58,.85)";
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 10, 4.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(-9, 0);
+    ctx.lineTo(-16, -5);
+    ctx.lineTo(-16, 5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "rgba(150,40,36,.8)";
+    ctx.beginPath();
+    ctx.ellipse(3, 1.6, 5, 2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#ffd34a";
+    ctx.beginPath();
+    ctx.arc(6, -1, 1.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // The waterfall lip and the churn beyond it
+  ctx.fillStyle = "rgba(232,250,255,.5)";
+  for (let x = RIVER_LEFT_BANK; x < RIVER_RIGHT_BANK; x += 22) {
+    const foam = Math.sin(x * 0.1 + elapsed * 3) * 3;
+    ctx.beginPath();
+    ctx.arc(x + 11, RIVER_WATERFALL_Y + foam, 9, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const falls = ctx.createLinearGradient(0, RIVER_WATERFALL_Y, 0, WORLD_HEIGHT);
+  falls.addColorStop(0, "#8fd2df");
+  falls.addColorStop(0.5, "#c7ecf2");
+  falls.addColorStop(1, "#eafaff");
+  ctx.fillStyle = falls;
+  ctx.fillRect(RIVER_LEFT_BANK, RIVER_WATERFALL_Y + 4, RIVER_RIGHT_BANK - RIVER_LEFT_BANK, WORLD_HEIGHT - RIVER_WATERFALL_Y);
+  ctx.strokeStyle = "rgba(255,255,255,.55)";
+  ctx.lineWidth = 2;
+  for (let x = RIVER_LEFT_BANK + 8; x < RIVER_RIGHT_BANK; x += 12) {
+    const drop = ((x * 3 + elapsed * 220) % 70);
+    ctx.beginPath();
+    ctx.moveTo(x, RIVER_WATERFALL_Y + 6 + drop * 0.2);
+    ctx.lineTo(x, RIVER_WATERFALL_Y + 6 + drop);
+    ctx.stroke();
+  }
+  // Rising mist at the very bottom
+  ctx.fillStyle = "rgba(255,255,255,.28)";
+  for (let m = 0; m < 16; m += 1) {
+    const mx = RIVER_LEFT_BANK + 20 + ((m * 151) % (RIVER_RIGHT_BANK - RIVER_LEFT_BANK - 40));
+    const my = WORLD_HEIGHT - 12 - (Math.sin(elapsed * 1.6 + m) + 1) * 9;
+    ctx.beginPath();
+    ctx.arc(mx, my, 10 + (m % 3) * 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // The two banks — thick jungle land on each side
+  const drawBank = (left: number, right: number, label: string, side: -1 | 1) => {
+    const grad = ctx.createLinearGradient(left, 0, right, 0);
+    if (side < 0) {
+      grad.addColorStop(0, "#3f7a3a");
+      grad.addColorStop(0.7, "#4f8f3f");
+      grad.addColorStop(1, "#5c9e46");
+    } else {
+      grad.addColorStop(0, "#5c9e46");
+      grad.addColorStop(0.3, "#4f8f3f");
+      grad.addColorStop(1, "#3f7a3a");
+    }
+    ctx.fillStyle = grad;
+    ctx.fillRect(left, 0, right - left, WORLD_HEIGHT);
+    // A wet, rocky waterline
+    const edge = side < 0 ? right : left;
+    ctx.fillStyle = "rgba(60,44,28,.5)";
+    for (let y = 0; y < WORLD_HEIGHT; y += 20) {
+      const jut = Math.sin(y * 0.08 + side) * 4;
+      ctx.beginPath();
+      ctx.ellipse(edge - side * (3 + jut), y + 10, 7, 9, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.strokeStyle = "rgba(236,252,255,.4)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    for (let y = 0; y <= WORLD_HEIGHT; y += 16) {
+      const wob = edge - side * (5 + Math.sin(y * 0.12 + elapsed * 2) * 3);
+      if (y === 0) ctx.moveTo(wob, y);
+      else ctx.lineTo(wob, y);
+    }
+    ctx.stroke();
+    // Scattered ferns and leaves
+    for (let l = 0; l < 26; l += 1) {
+      const lx = left + 10 + ((l * 61) % Math.max(20, right - left - 20));
+      const ly = 20 + ((l * 89) % (WORLD_HEIGHT - 40));
+      drawLeaf(ctx, lx, ly, 12 + (l % 4) * 2, (l * 1.3) + Math.sin(elapsed * 0.7 + l) * 0.1, l % 3 ? "#3c6f34" : "#4f9040");
+    }
+    // Vertical bank label
+    ctx.save();
+    ctx.translate(side < 0 ? left + (right - left) / 2 : left + (right - left) / 2, WORLD_HEIGHT / 2);
+    ctx.fillStyle = "rgba(240,255,236,.28)";
+    ctx.font = "900 30px Arial";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, 0, 0);
+    ctx.textBaseline = "alphabetic";
+    ctx.restore();
+  };
+  drawBank(0, RIVER_LEFT_BANK, "START", -1);
+  drawBank(RIVER_RIGHT_BANK, WORLD_WIDTH, "END", 1);
+
+  // A trail sign marking the goal on the far bank
+  ctx.fillStyle = "#6a4a2a";
+  roundedRect(ctx, RIVER_RIGHT_BANK + 44, 120, 12, 90, 4);
+  ctx.fill();
+  ctx.fillStyle = "#caa15a";
+  roundedRect(ctx, RIVER_RIGHT_BANK + 12, 96, 108, 44, 8);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(60,40,20,.6)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.fillStyle = "#3a2612";
+  ctx.font = "900 15px Arial";
+  ctx.textAlign = "center";
+  ctx.fillText("TRAIL →", RIVER_RIGHT_BANK + 66, 123);
+
+  // Water-direction reminder on the right, like the field sketch
+  ctx.strokeStyle = "rgba(232,250,255,.5)";
+  ctx.fillStyle = "rgba(232,250,255,.6)";
+  ctx.lineWidth = 3;
+  const arrowX = RIVER_RIGHT_BANK - 40;
+  ctx.beginPath();
+  ctx.moveTo(arrowX, 210);
+  ctx.lineTo(arrowX, 300);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(arrowX - 7, 292);
+  ctx.lineTo(arrowX, 306);
+  ctx.lineTo(arrowX + 7, 292);
+  ctx.closePath();
+  ctx.fill();
+  ctx.save();
+  ctx.translate(arrowX, 190);
+  ctx.fillStyle = "rgba(232,250,255,.55)";
+  ctx.font = "900 9px Arial";
+  ctx.textAlign = "center";
+  ctx.fillText("FLOW", 0, 0);
+  ctx.restore();
+
+  // Free logs first, then the ridden one on top
+  const ridingId = river.ridingLogId;
+  river.logs.forEach((log) => {
+    if (log.id === ridingId) return;
+    drawRiverLog(ctx, log, elapsed, false, log.id === river.targetLogId && !river.hopping);
+  });
+  const ridden = ridingLog(river);
+  if (ridden) drawRiverLog(ctx, ridden, elapsed, true, false);
+
+  // The companion cheers from the near bank
+  drawTopDownCharacter(ctx, RIVER_START_X - 24, RIVER_START_Y + 150, companion, "forward", elapsed, 0, false);
+
+  // The active explorer — on a log, on the bank, hopping, or gone in the drink
+  if (!game.lost) {
+    const hopLift = river.hopping ? Math.min(1, river.hopLift / 26) : 0;
+    const moving = river.hopping || (ridden !== null && Math.abs(ridden.spin) > 0.3);
+    drawTopDownCharacter(ctx, player.x, player.y, activeCharacter, "forward", elapsed, hopLift, moving);
+  } else if (river.lossReason === "piranha") {
+    // A churn of fins and foam where the explorer went under
+    ctx.save();
+    ctx.translate(player.x, Math.min(player.y, RIVER_WATERFALL_Y - 20));
+    const churn = Math.min(1, (0.6 - river.splashFlash) / 0.6 + 0.2);
+    ctx.fillStyle = "rgba(232,250,255,.6)";
+    for (let i = 0; i < 8; i += 1) {
+      const a = (i / 8) * Math.PI * 2 + elapsed * 4;
+      ctx.beginPath();
+      ctx.arc(Math.cos(a) * 18 * churn, Math.sin(a) * 12 * churn, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = "rgba(150,40,36,.8)";
+    for (let i = 0; i < 5; i += 1) {
+      const a = (i / 5) * Math.PI * 2 - elapsed * 5;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * 20, Math.sin(a) * 14);
+      ctx.lineTo(Math.cos(a) * 30, Math.sin(a) * 20);
+      ctx.lineTo(Math.cos(a + 0.3) * 24, Math.sin(a + 0.3) * 16);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  } else {
+    // Tumbling over the falls
+    ctx.save();
+    ctx.translate(player.x, Math.min(player.y, WORLD_HEIGHT - 24));
+    ctx.rotate(elapsed * 6);
+    drawTopDownCharacter(ctx, 0, 0, activeCharacter, "forward", elapsed, 0.4, true);
+    ctx.restore();
+  }
+
+  drawRiverHud(ctx, game);
+
+  if (!game.running && !game.won && !game.lost) {
+    ctx.fillStyle = "rgba(5,29,27,.18)";
+    ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+  }
+}
+
 export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<GameState>(makeGame(1));
@@ -4578,6 +5078,7 @@ export default function Home() {
   const [hippoLoss, setHippoLoss] = useState<HippoLossReason | null>(null);
   const [snakeLoss, setSnakeLoss] = useState<SnakeLossReason | null>(null);
   const [pigLoss, setPigLoss] = useState<PigLossReason | null>(null);
+  const [riverLoss, setRiverLoss] = useState<RiverLossReason | null>(null);
   const snakeSeedRef = useRef(0);
 
   useEffect(() => {
@@ -4637,6 +5138,7 @@ export default function Home() {
     setHippoLoss(null);
     setSnakeLoss(null);
     setPigLoss(null);
+    setRiverLoss(null);
     setCourseStatus(
       byCourse(
         activeCourse,
@@ -4646,6 +5148,7 @@ export default function Home() {
         "Walk to the edge — SPACE hops, hold Z + SPACE leaps",
         "Hop forward with → — roots are safe, snakes are not",
         "Run across on the stilts — hold Z + SPACE to vault boulders",
+        "Press SPACE to hop onto a log, then ←→ to spin it across",
       ),
     );
   }, [activeCourse]);
@@ -4686,6 +5189,7 @@ export default function Home() {
     setHippoLoss(null);
     setSnakeLoss(null);
     setPigLoss(null);
+    setRiverLoss(null);
     setCourseStatus(
       byCourse(
         course,
@@ -4695,6 +5199,7 @@ export default function Home() {
         "Walk to the edge — SPACE hops, hold Z + SPACE leaps",
         "Hop forward with → — roots are safe, snakes are not",
         "Run across on the stilts — hold Z + SPACE to vault boulders",
+        "Press SPACE to hop onto a log, then ←→ to spin it across",
       ),
     );
     window.setTimeout(() => {
@@ -5429,7 +5934,7 @@ export default function Home() {
                   : `Row ${row} / ${SNAKE_COLS} — on a root · ↑↓ walk it, → hops the next row`,
             );
           }
-        } else {
+        } else if (game.course === 6) {
           const valley = game.pig;
           const events = stepPigCourse(
             valley,
@@ -5536,6 +6041,79 @@ export default function Home() {
                           : "Keep moving — the pigs bite planted stilts",
             );
           }
+        } else {
+          const river = game.river;
+          const aim = (down ? 1 : 0) - (up ? 1 : 0);
+          const events = stepRiverCourse(river, player, { move, aim }, dt);
+          events.forEach((event: RiverEvent) => {
+            switch (event.type) {
+              case "hop":
+                setCourseStatus("Hop! Land on a log — ←→ to spin it");
+                playTone(392, 0.06, "square");
+                break;
+              case "board":
+                setCourseStatus(
+                  event.kind === "climb"
+                    ? "A slanted log — spin → to cross AND climb away from the falls"
+                    : event.kind === "brake"
+                      ? "A crosswise log — spin → to fight the current and gain height"
+                      : event.kind === "sink"
+                        ? "Careful — spinning → drags this one downstream; hop off soon"
+                        : "A straight log — spin → to cross, but the current keeps pulling you down",
+                );
+                playTone(440, 0.06, "square");
+                window.setTimeout(() => playTone(560, 0.06, "square"), 60);
+                break;
+              case "spin":
+                playTone(event.direction > 0 ? 320 : 232, 0.04, "square");
+                break;
+              case "warn":
+                setCourseStatus("The waterfall is close — spin to climb back up, or hop to a slanted log!");
+                playTone(200, 0.16, "sawtooth");
+                window.setTimeout(() => playTone(150, 0.16, "sawtooth"), 150);
+                break;
+              case "won":
+                game.running = false;
+                game.won = true;
+                setOverlay("won");
+                setCourseStatus("Course clear!");
+                playTone(784, 0.16, "triangle");
+                window.setTimeout(() => playTone(1046, 0.22, "triangle"), 120);
+                break;
+              case "lost":
+                game.running = false;
+                game.lost = true;
+                setRiverLoss(event.reason);
+                setOverlay("gameover");
+                setCourseStatus(
+                  event.reason === "waterfall"
+                    ? "Swept over the waterfall!"
+                    : "Splash — into the piranhas!",
+                );
+                playTone(event.reason === "waterfall" ? 130 : 90, 0.42, "sawtooth");
+                break;
+            }
+          });
+
+          statusTimer += dt;
+          if (statusTimer > 0.5 && events.length === 0 && !game.won && !game.lost) {
+            statusTimer = 0;
+            const log = ridingLog(river);
+            const headroom = riverHeadroom(player.y);
+            setCourseStatus(
+              river.onBank === "start"
+                ? "Press SPACE to hop onto the first log"
+                : headroom < 0.32
+                  ? "The falls are close! Spin to climb, or hop to a slanted log"
+                  : river.targetLogId !== null
+                    ? "SPACE hops to the highlighted log — hold ↑ to aim upstream"
+                    : log
+                      ? player.x > (RIVER_LEFT_BANK + RIVER_RIGHT_BANK) / 2
+                        ? "Over halfway — steer for the far bank"
+                        : "Spin ←→ to steer — most logs carry you toward the far bank"
+                      : "Find a log to land on",
+            );
+          }
         }
       } else {
         game.elapsed += dt * 0.35;
@@ -5546,7 +6124,8 @@ export default function Home() {
       else if (game.course === 3) drawEagleWorld(context, game, activeCharacter);
       else if (game.course === 4) drawHippoWorld(context, game, activeCharacter);
       else if (game.course === 5) drawSnakeWorld(context, game, activeCharacter);
-      else drawPigWorld(context, game, activeCharacter);
+      else if (game.course === 6) drawPigWorld(context, game, activeCharacter);
+      else drawRiverWorld(context, game, activeCharacter);
       animationFrame = window.requestAnimationFrame(update);
     };
 
@@ -5590,6 +6169,8 @@ export default function Home() {
         } else if (game.course === 6) {
           game.pig.jumpPresses += 1;
           game.pig.jumpWithHold = keysRef.current.has("KeyZ");
+        } else if (game.course === 7) {
+          game.river.jumpPresses += 1;
         } else if (game.course === 2 && player.onGround) {
           player.vy = -515;
           player.onGround = false;
@@ -5666,6 +6247,8 @@ export default function Home() {
       // The touch VAULT button always primes a vault; a run-up carries it over a boulder.
       game.pig.jumpPresses += 1;
       game.pig.jumpWithHold = true;
+    } else if (game.course === 7) {
+      game.river.jumpPresses += 1;
     } else if (game.course === 2 && player.onGround) {
       player.vy = -515;
       player.onGround = false;
@@ -5725,7 +6308,7 @@ export default function Home() {
               <span>ENTER THE JUNGLE</span>
               <span aria-hidden="true">→</span>
             </button>
-            <small>COURSES 01–06 READY · SIX JUNGLE CHALLENGES</small>
+            <small>COURSES 01–07 READY · SEVEN JUNGLE CHALLENGES</small>
           </div>
         </section>
       )}
@@ -5810,6 +6393,11 @@ export default function Home() {
               onClick={() => selectCourse(6)}
               type="button"
             >06 · PIGS</button>
+            <button
+              className={activeCourse === 7 ? "selected" : ""}
+              onClick={() => selectCourse(7)}
+              type="button"
+            >07 · PIRANHAS</button>
           </div>
           <p className="eyebrow">
             {byCourse(
@@ -5820,6 +6408,7 @@ export default function Home() {
               "COURSE 04 · HIPPO RIVER",
               "COURSE 05 · SLEEPING SNAKES",
               "COURSE 06 · WILD PIG VALLEY",
+              "COURSE 07 · PIRANHA RIVER",
             )}
           </p>
           <h1>
@@ -5831,6 +6420,7 @@ export default function Home() {
               "The Hippo Crossing",
               "The Sleeping Snakes",
               "The Wild Pig Valley",
+              "The Piranha River",
             )}
           </h1>
         </div>
@@ -5843,6 +6433,7 @@ export default function Home() {
             "Four hippos wallow between the banks. Every part of a hippo is a landing spot, but only the back forgives a pause — and one hippo likes to dive.",
             "Seen from above, the forest floor is a tangle of roots and sleeping vipers that look exactly alike. Hop one row at a time, wake them on purpose, and remember what you saw.",
             "The trail ends at a cliff. Down in the valley, wild pigs root among the boulders. Strap on the pea-leg stilts — taller than the valley wall, for now — and cross before the boars chew them too short to climb out.",
+            "The trail is cut by a wide river sliding toward a waterfall. Logs float down it — hop aboard, spin them the right way to steer across, and don't fall in with the piranhas.",
           )}
         </p>
       </section>
@@ -5857,6 +6448,7 @@ export default function Home() {
           "The Hippo Crossing game",
           "The Sleeping Snakes game",
           "The Wild Pig Valley game",
+          "The Piranha River game",
         )}
       >
         <div className="game-hud">
@@ -5889,6 +6481,7 @@ export default function Home() {
               "A side-scrolling river course. Hop across four hippos using short hops and charged long jumps, landing on heads and backs but never in a mouth.",
               "A top-down maze course. Hop across twenty rows of roots and sleeping snakes that look identical, waking snakes briefly to memorize a safe path.",
               "A side-scrolling valley course. Drop from the high ground and cross the valley floor on wooden stilts, vaulting boulders with Z and Space while wild pigs bite the stilts shorter; climb out only while the stilts are still taller than the valley wall.",
+              "A top-down river course. Hop onto floating logs and spin them with the arrow keys to steer left-to-right across a current flowing toward a waterfall, while piranhas wait below; reach the far bank without falling in or going over the falls.",
             )}
           />
 
@@ -5906,6 +6499,7 @@ export default function Home() {
                       "● HIPPOS RESTLESS",
                       "● SNAKES SLEEPING",
                       "● WILD PIGS ROAMING",
+                      "● PIRANHAS CIRCLING",
                     )}
                   </span>
                 </div>
@@ -5923,8 +6517,10 @@ export default function Home() {
                         <>Hop the river.<br />Never land in a mouth.</>
                       ) : activeCourse === 5 ? (
                         <>Cross twenty rows.<br />Remember the snakes.</>
-                      ) : (
+                      ) : activeCourse === 6 ? (
                         <>Cross the valley.<br />Climb out before the stilts are too short.</>
+                      ) : (
+                        <>Spin the logs across.<br />Stay out of the piranhas.</>
                       )}
                     </h2>
                     <p>
@@ -5951,11 +6547,17 @@ export default function Home() {
                         with <strong>→</strong>. Land on a snake and <strong>every snake wakes</strong>{" "}
                         for a moment — hop to a root (or straight back) before it bites. Roots are
                         safe forever: walk along them with <strong>↑↓</strong> to line up the next hop.</>
-                      ) : (
+                      ) : activeCourse === 6 ? (
                         <>The stilts are <strong>taller than the valley wall</strong> — that is how you climb
                         out on the far side. Every pig bite <strong>chews them shorter</strong>, and once they
                         are shorter than the wall you are stuck down there. Hold <strong>X</strong> to run,
                         press <strong>Z + SPACE</strong> to vault the boulders, and never stand still.</>
+                      ) : (
+                        <>Press <strong>SPACE</strong> to hop onto a floating log. Spin it with{" "}
+                        <strong>←</strong> and <strong>→</strong>: most logs carry you toward the far bank, and
+                        the <strong>slanted</strong> ones also climb away from the falls. The current never
+                        stops pulling you down, so keep spinning, and <strong>hop</strong> to a fresh log
+                        before yours drifts too low — a missed hop drops you in with the piranhas.</>
                       )}
                     </p>
 
@@ -5990,17 +6592,17 @@ export default function Home() {
                   <div className="control-panel">
                     <p className="eyebrow">CONTROLS</p>
                     <div className="control-row">
-                      <span className="key-pair"><kbd>←→</kbd>{(activeCourse === 1 || activeCourse === 5) && <kbd>↑↓</kbd>}</span>
+                      <span className="key-pair"><kbd>←→</kbd>{(activeCourse === 1 || activeCourse === 5 || activeCourse === 7) && <kbd>↑↓</kbd>}</span>
                       <span>
-                        <b>{byCourse(activeCourse, "Move / climb", "Move / steer", "Move", "Walk", "Hop a row", "Move / run")}</b>
-                        <small>{byCourse(activeCourse, "Steer in air, climb on a vine", "Control every jump in the air", "Walk the clearing, chase rodents", "Position yourself on a back or the bank edge", "Forward or back, onto whatever is there", "Walk off the ledge, cross the floor, steer in the air")}</small>
+                        <b>{byCourse(activeCourse, "Move / climb", "Move / steer", "Move", "Walk", "Hop a row", "Move / run", "Spin the log")}</b>
+                        <small>{byCourse(activeCourse, "Steer in air, climb on a vine", "Control every jump in the air", "Walk the clearing, chase rodents", "Position yourself on a back or the bank edge", "Forward or back, onto whatever is there", "Walk off the ledge, cross the floor, steer in the air", "→ forward, ← back — build, cancel, or reverse the spin")}</small>
                       </span>
                     </div>
                     <div className="control-row">
                       <span className="wide-key"><kbd>SPACE</kbd></span>
                       <span>
-                        <b>{byCourse(activeCourse, "Jump / release", "Jump / stomp", "Grab / drop / struggle", "Short hop", "Hop forward", "Hop")}</b>
-                        <small>{byCourse(activeCourse, "Leap at the swing’s edge", "Land on monkeys to make them dizzy", "Pick up what’s nearest; mash to break free", "Bank → mouth or head · head → back · back → next head", "Same as →, one row at a time", "Lifts the stilts clear of a bite — too low for a boulder")}</small>
+                        <b>{byCourse(activeCourse, "Jump / release", "Jump / stomp", "Grab / drop / struggle", "Short hop", "Hop forward", "Hop", "Hop to a log")}</b>
+                        <small>{byCourse(activeCourse, "Leap at the swing’s edge", "Land on monkeys to make them dizzy", "Pick up what’s nearest; mash to break free", "Bank → mouth or head · head → back · back → next head", "Same as →, one row at a time", "Lifts the stilts clear of a bite — too low for a boulder", "Leaps to the highlighted log — miss and it's the piranhas")}</small>
                       </span>
                     </div>
                     {activeCourse === 1 && (
@@ -6033,7 +6635,13 @@ export default function Home() {
                         <span><b>Stilt vault</b><small>Hold Z and press SPACE with a run-up to clear a boulder — from a standstill you land on top of it, out of the pigs’ reach</small></span>
                       </div>
                     )}
-                    {activeCourse !== 4 && activeCourse !== 5 && (
+                    {activeCourse === 7 && (
+                      <div className="control-row important-control">
+                        <span className="wide-key"><kbd>↑↓</kbd></span>
+                        <span><b>Aim your hop</b><small>Hold ↑ before SPACE to jump upstream, away from the falls</small></span>
+                      </div>
+                    )}
+                    {activeCourse !== 4 && activeCourse !== 5 && activeCourse !== 7 && (
                       <div className="control-row">
                         <span className="wide-key"><kbd>X</kbd></span>
                         <span><b>Run</b><small>{activeCourse === 3 ? "Not while a rodent is raised" : activeCourse === 6 ? "Faster than a charging pig — walking is not" : "Build a longer jump"}</small></span>
@@ -6051,6 +6659,7 @@ export default function Home() {
                           "Stand at the rear of a back before a short hop, or it lands in the next mouth. Hold Z until the meter is green, then SPACE for a long jump straight to the next back.",
                           "Stepping on a snake and hopping straight back to your root is always safe — use it to peek at every snake in the maze, then memorize the way.",
                           "Watch the WALL mark on the stilt meter: above it you can climb out, below it you can't. Pigs only bite planted stilts, and the top of a boulder is out of their reach — rest there until the pig wanders off, then run.",
+                          "A log's angle decides everything: straight logs cross fast but sink, slanted logs cross AND climb. Watch the DISTANCE TO FALLS meter — when it runs low, get on a slanted log and spin → to fight your way back up.",
                         )}
                       </p>
                     </div>
@@ -6060,7 +6669,7 @@ export default function Home() {
                   <span>
                     {hasStarted
                       ? "RESUME COURSE"
-                      : byCourse(activeCourse, "BEGIN CROSSING", "BEGIN THE CLIMB", "BRAVE THE SKIES", "HOP THE RIVER", "ENTER THE TANGLE", "BRAVE THE VALLEY")}
+                      : byCourse(activeCourse, "BEGIN CROSSING", "BEGIN THE CLIMB", "BRAVE THE SKIES", "HOP THE RIVER", "ENTER THE TANGLE", "BRAVE THE VALLEY", "RIDE THE LOGS")}
                   </span>
                   <span aria-hidden="true">→</span>
                 </button>
@@ -6071,7 +6680,7 @@ export default function Home() {
           {overlay === "gameover" && (
             <div className="game-overlay result-overlay" role="dialog" aria-modal="true" aria-labelledby="gameover-title">
               <div className="result-card">
-                <span className="result-icon" aria-hidden="true">{byCourse(activeCourse, "〰", "▲", "▼", "💦", "〽", "🐗")}</span>
+                <span className="result-icon" aria-hidden="true">{byCourse(activeCourse, "〰", "▲", "▼", "💦", "〽", "🐗", riverLoss === "waterfall" ? "🌊" : "🐟")}</span>
                 <p className="eyebrow">THE JUNGLE GOT YOU</p>
                 <h2 id="gameover-title">
                   {byCourse(
@@ -6094,6 +6703,9 @@ export default function Home() {
                     pigLoss === "trapped"
                       ? "Too short to climb out!"
                       : "The pigs chewed through your stilts!",
+                    riverLoss === "waterfall"
+                      ? "Swept over the waterfall!"
+                      : "Splash — right into the piranhas!",
                   )}
                 </h2>
                 <p>
@@ -6117,6 +6729,9 @@ export default function Home() {
                     pigLoss === "trapped"
                       ? "Every bite chews the stilts shorter, and once they're shorter than the valley wall there is no way up. Keep the meter above the WALL mark: run, vault early, and rest on a rock when a pig is right under you."
                       : "The stilts only take so many bites. Hold X to run, hop or vault to lift the legs clear, and never stand still on the floor — a boulder you haven't vaulted yet is where the pigs catch you.",
+                    riverLoss === "waterfall"
+                      ? "The current never rests. Don't ride a straight log too long — it only sinks. Spin a slanted log with → to climb, and hop upstream (hold ↑) before the DISTANCE TO FALLS meter runs out."
+                      : "Only hop when a log is highlighted — that's the one your jump will grab. With nothing in reach, keep spinning your log across instead, and never leap into open water.",
                   )}
                 </p>
                 <button className="primary-button compact" onClick={restartCourse} type="button">
@@ -6140,7 +6755,8 @@ export default function Home() {
                     "The eagles are fed and the trail winds on. Downriver, four hippos wallow across the only ford.",
                     "Four hippos hopped and not a splash. Deeper in, the forest floor is a tangle of roots and sleeping snakes.",
                     "Twenty rows of vipers and not one bite. Beyond the trees the ground drops into a valley where wild pigs root and squeal.",
-                    "Up and over the far wall with wood to spare, and not a single boar caught you. Somewhere ahead a gentle giant guards the way.",
+                    "Up and over the far wall with wood to spare, and not a single boar caught you. Ahead, the trail is cut by a wide river racing toward a waterfall.",
+                    "Across the river without a splash — the piranhas go hungry and the waterfall roars behind you. One last guardian stands between you and the Golden Pumpkin.",
                   )}
                 </p>
                 <div className="result-actions">
@@ -6163,6 +6779,10 @@ export default function Home() {
                   ) : activeCourse === 5 ? (
                     <button className="primary-button compact" onClick={() => selectCourse(6)} type="button">
                       PLAY COURSE 06 <span aria-hidden="true">→</span>
+                    </button>
+                  ) : activeCourse === 6 ? (
+                    <button className="primary-button compact" onClick={() => selectCourse(7)} type="button">
+                      PLAY COURSE 07 <span aria-hidden="true">→</span>
                     </button>
                   ) : (
                     <button className="primary-button compact" onClick={() => document.querySelector("#expedition")?.scrollIntoView({ behavior: "smooth" })} type="button">
@@ -6194,7 +6814,7 @@ export default function Home() {
               aria-label="Move right"
               type="button"
             >→</button>
-            {(activeCourse === 1 || activeCourse === 5) && (
+            {(activeCourse === 1 || activeCourse === 5 || activeCourse === 7) && (
               <>
                 <button
                   onPointerDown={() => pressControl("ArrowUp")}
@@ -6218,19 +6838,19 @@ export default function Home() {
           <div>
             <button
               className="grab-touch"
-              onPointerDown={() => pressControl(activeCourse === 2 || activeCourse === 6 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : "KeyZ")}
-              onPointerUp={() => releaseControl(activeCourse === 2 || activeCourse === 6 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : "KeyZ")}
-              onPointerCancel={() => releaseControl(activeCourse === 2 || activeCourse === 6 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : "KeyZ")}
-              onPointerLeave={() => releaseControl(activeCourse === 2 || activeCourse === 6 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : "KeyZ")}
-              aria-label={byCourse(activeCourse, "Grab and hold vine", "Run", "Raise rodent or eat fruit", "Hold to charge a long jump", "Hop back a row", "Run to outrun the pigs")}
+              onPointerDown={() => pressControl(activeCourse === 2 || activeCourse === 6 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : activeCourse === 7 ? "ArrowUp" : "KeyZ")}
+              onPointerUp={() => releaseControl(activeCourse === 2 || activeCourse === 6 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : activeCourse === 7 ? "ArrowUp" : "KeyZ")}
+              onPointerCancel={() => releaseControl(activeCourse === 2 || activeCourse === 6 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : activeCourse === 7 ? "ArrowUp" : "KeyZ")}
+              onPointerLeave={() => releaseControl(activeCourse === 2 || activeCourse === 6 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : activeCourse === 7 ? "ArrowUp" : "KeyZ")}
+              aria-label={byCourse(activeCourse, "Grab and hold vine", "Run", "Raise rodent or eat fruit", "Hold to charge a long jump", "Hop back a row", "Run to outrun the pigs", "Aim your hop upstream")}
               type="button"
-            >{byCourse(activeCourse, "GRAB", "RUN", "RAISE", "CHARGE", "BACK", "RUN")}</button>
+            >{byCourse(activeCourse, "GRAB", "RUN", "RAISE", "CHARGE", "BACK", "RUN", "UP ↑")}</button>
             <button
               className="jump-touch"
               onPointerDown={tapJump}
-              aria-label={byCourse(activeCourse, "Jump or release vine", "Jump or stomp", "Grab, drop, or struggle", "Hop, or leap while charging", "Hop forward a row", "Vault over a boulder")}
+              aria-label={byCourse(activeCourse, "Jump or release vine", "Jump or stomp", "Grab, drop, or struggle", "Hop, or leap while charging", "Hop forward a row", "Vault over a boulder", "Hop to a log")}
               type="button"
-            >{activeCourse === 3 ? "GRAB" : activeCourse === 5 ? "HOP" : activeCourse === 6 ? "VAULT" : "JUMP"}</button>
+            >{activeCourse === 3 ? "GRAB" : activeCourse === 5 ? "HOP" : activeCourse === 6 ? "VAULT" : activeCourse === 7 ? "HOP" : "JUMP"}</button>
           </div>
         </div>
       </section>
@@ -6271,12 +6891,19 @@ export default function Home() {
             <div><kbd className="long accent">↑↓</kbd><span><b>WALK THE ROOT</b> Roots are always safe</span></div>
             <div><kbd className="long">BLINK</kbd><span><b>SNAKES BITE</b> Hop off the instant you land</span></div>
           </>
-        ) : (
+        ) : activeCourse === 6 ? (
           <>
             <div><kbd>←→</kbd><span><b>MOVE</b> Drop in, cross the floor on stilts</span></div>
             <div><kbd className="long">SPACE</kbd><span><b>HOP</b> Lift the stilts clear of a bite</span></div>
             <div><kbd className="long accent">Z + SPACE</kbd><span><b>VAULT</b> Clear the boulders with a run-up</span></div>
             <div><kbd className="long">WALL</kbd><span><b>STILTS SHRINK</b> Below the mark you can’t climb out</span></div>
+          </>
+        ) : (
+          <>
+            <div><kbd>←→</kbd><span><b>SPIN THE LOG</b> → forward, ← back to steer</span></div>
+            <div><kbd className="long">SPACE</kbd><span><b>HOP</b> Jump to the highlighted log</span></div>
+            <div><kbd className="long accent">↑</kbd><span><b>AIM UPSTREAM</b> Hold before SPACE to climb</span></div>
+            <div><kbd className="long">FALLS</kbd><span><b>THE CURRENT PULLS</b> Slanted logs climb back up</span></div>
           </>
         )}
       </section>
@@ -6297,11 +6924,11 @@ export default function Home() {
           {courses.map((course, index) => (
             <button
               className={`course-card ${index === activeCourse - 1 ? "current" : ""}`}
-              disabled={index > 5}
+              disabled={index > 6}
               key={course.number}
               onClick={() => selectCourse((index + 1) as CourseNumber)}
               type="button"
-              aria-label={index < 6 ? `Play course ${course.number}: ${course.title}` : `${course.title} is planned`}
+              aria-label={index < 7 ? `Play course ${course.number}: ${course.title}` : `${course.title} is planned`}
             >
               <div className="course-card-top">
                 <span className="course-number">{course.number}</span>
