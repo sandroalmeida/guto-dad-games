@@ -41,15 +41,16 @@ Golden Pumpkin.
   at a calm cadence with a moment to line up and a pause to chew, and the whole
   herd is let loose only once the stilts are too short.
 - Course 7 is a top-down river seen from above, flowing toward a waterfall at
-  the bottom of the screen. Floating logs drift down the current; hop onto one
-  and spin it left or right to steer. A log's angle decides everything: straight
-  logs cross fast but keep sinking with the current, slanted logs cross *and*
-  climb away from the falls, and a crosswise log is pure upstream. The spin is a
-  managed velocity — an arrow winds it up, the opposite arrow bleeds it off or
-  reverses it, and it decays on its own. Hop between logs to keep progressing;
-  miss and land in open water and the piranhas get you, drift over the lip and
-  it's the falls. A DISTANCE TO FALLS meter, a LOG SPIN gauge, and a crossing
-  bar keep the state readable.
+  the bottom of the screen. You walk the near bank with the arrows to line up a
+  jump, then leap onto a floating log — aiming and steering the jump yourself,
+  with nothing lining it up for you; miss and the piranhas (a detailed shoal
+  that actively hunts and swarms you) get you. On a log the arrows *spin* it: a
+  managed velocity that winds up, bleeds off, reverses, and decays on its own.
+  Spin drives you along the log's angle — straight logs cross fast, slanted
+  logs cross while sinking slowest — but the current always wins: no log ever
+  climbs, spin only slows the fall. So no single log carries you across; before
+  yours sinks too low you must hop UP to a fresher, higher one. A DISTANCE TO
+  FALLS meter, a LOG SPIN gauge, and a crossing bar keep the state readable.
 
 ## Controls
 
@@ -124,17 +125,19 @@ up a bite, and stops to chew after one, so keep moving and no more than a bite
 or two should ever land.
 
 In Course 7, seen from above, the river slides top to bottom toward a waterfall
-and the crossing runs left to right. Press `Space` on the near bank to hop onto
-the highlighted log, then spin it with `←` / `→`: `→` builds forward spin, `←`
-bleeds it off, cancels it, or reverses it, and letting go lets it wind down.
-Forward spin drives you along the log's roll — straight (vertical) logs carry
-you across but the current keeps pulling you toward the falls, slanted logs
-carry you across *and* upstream, and a crosswise (horizontal) log fights the
-current without crossing. `Space` hops to the highlighted log in reach — hold
-`↑` first to aim the hop upstream, away from the falls. Watch the DISTANCE TO
-FALLS meter: when it runs low, get onto a slanted log and spin `→` to climb.
-Fall in the water and the piranhas end the attempt; drift over the waterfall
-lip and you go over. Reach the far bank to finish.
+and the crossing runs left to right. On the near bank, walk about with the
+arrows to pick your spot, then press `Space` to leap — the jump goes the way you
+point, and you steer it through the air with the arrows to come down on a log.
+Nothing lines the jump up for you: miss a log and you land among the piranhas.
+On a log the arrows *spin* it: `→` builds forward spin, `←` bleeds it off,
+cancels it, or reverses it, and letting go lets it wind down. Forward spin
+drives you along the log's angle — straight (vertical) logs carry you across
+fast, slanted logs carry you across while sinking slowest — but the current
+always wins: no log climbs, spin only slows the fall. Watch the DISTANCE TO
+FALLS meter: no single log crosses the river, so before yours sinks too low,
+aim a jump at a higher log and hop UP to it. Fall in the water and the piranhas
+end the attempt; drift over the waterfall lip and you go over. Reach the far
+bank to finish.
 
 ## Run locally
 
