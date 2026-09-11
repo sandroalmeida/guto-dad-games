@@ -15,42 +15,60 @@ export const RIVER_START_X = 96;
 export const RIVER_START_Y = 150;
 export const RIVER_STEP_MARGIN = 24;
 
-// The current carries everything downstream at a steady crawl. Only a log spun
-// the right way on the right angle can claw back the height it takes.
-export const RIVER_CURRENT = 40;
+// The current is the boss of this river. It carries everything downstream fast
+// enough that no amount of spin can climb back against it — the best you can do
+// on a log is slow your fall. To gain height you have to hop to a fresher log.
+export const RIVER_CURRENT = 62;
+// Even a perfectly-spun log still sinks this fast — enough that no single log
+// carries you across, so you always have to hop to a fresher, higher one.
+export const RIVER_MIN_DRIFT = 40;
 
 // Spinning is a managed velocity: an arrow ramps the spin, the opposite arrow
 // bleeds it off or reverses it, and letting go lets it wind down on its own.
-export const RIVER_SPIN_ACCEL = 6.4;
-export const RIVER_SPIN_MAX = 6.2;
-export const RIVER_SPIN_DECAY = 0.5;
-export const RIVER_SPIN_THRUST = 24;
+export const RIVER_SPIN_ACCEL = 5.4;
+export const RIVER_SPIN_MAX = 6;
+export const RIVER_SPIN_DECAY = 0.55;
+export const RIVER_SPIN_THRUST = 17;
 
 export const RIVER_LOG_LENGTH = 120;
 export const RIVER_LOG_RADIUS = 15;
-export const RIVER_GRAB_RADIUS = 27;
+export const RIVER_GRAB_RADIUS = 30;
 
-// A hop is a short fixed arc; the current cannot touch you while you are in the
-// air, but the log you are aiming for keeps drifting until you land on it.
-export const RIVER_HOP_TIME = 0.42;
-export const RIVER_HOP_ARC = 26;
-export const RIVER_HOP_MIN_DX = 34;
-export const RIVER_HOP_MAX_DX = 216;
-export const RIVER_HOP_MAX_DY = 156;
-export const RIVER_HOP_BLIND_DX = 150;
-export const RIVER_HOP_BLIND_DY = 96;
+// Standing on the near bank you can walk about with the arrows to line up a
+// jump; the arrows only ever spin the log once you are actually on one.
+export const RIVER_BANK_WALK = 168;
+export const RIVER_BANK_MIN_X = 34;
+export const RIVER_BANK_MIN_Y = RIVER_TOP + 24;
+export const RIVER_BANK_MAX_Y = RIVER_WATERFALL_Y - 40;
 
-export const RIVER_MAX_LOGS = 7;
-export const RIVER_MIN_LOGS = 5;
-export const RIVER_SPAWN_INTERVAL = 0.85;
+// A hop is a real leap you aim and steer: it launches the way you point and the
+// arrows steer the arc toward a capped cruise speed, so a hop travels a
+// predictable distance in the direction you hold and lands where you guide it —
+// nothing lines it up for you. The current cannot touch you while you are off
+// the water. A held direction cruises ~HOP_SPEED*HOP_TIME px that way.
+export const RIVER_HOP_TIME = 0.56;
+export const RIVER_HOP_SPEED = 342;
+export const RIVER_HOP_STEER = 10;
+export const RIVER_HOP_ARC = 30;
+
+export const RIVER_MAX_LOGS = 14;
+export const RIVER_MIN_LOGS = 11;
+export const RIVER_SPAWN_INTERVAL = 0.45;
+
+// Piranhas prowl the whole river and close in on the explorer, hungriest near
+// the falls and in a frenzy once someone is in the water.
+export const RIVER_PIRANHA_COUNT = 9;
+export const RIVER_PIRANHA_SPEED = 52;
+export const RIVER_PIRANHA_LURK = 62;
 
 // The mix of logs that float down. Forward spin on a log pushes the rider along
-// its `roll` vector, so most logs carry you rightward (toward END); the
-// climb-cross logs also fight the falls, the lone sink-cross log is a trap.
+// its `roll` vector, so most logs carry you rightward (toward END). No log lets
+// you beat the current, but a climb-cross log slows the fall the most; a
+// crosswise brake log only stalls, and the sink-cross log makes things worse.
 export const riverRollKinds = [
-  { roll: { x: 1, y: 0 }, weight: 4, kind: "cross" },
-  { roll: { x: 0.7071, y: -0.7071 }, weight: 4, kind: "climb" },
-  { roll: { x: 0, y: -1 }, weight: 2, kind: "brake" },
+  { roll: { x: 1, y: 0 }, weight: 3, kind: "cross" },
+  { roll: { x: 0.7071, y: -0.7071 }, weight: 5, kind: "climb" },
+  { roll: { x: 0, y: -1 }, weight: 1, kind: "brake" },
   { roll: { x: 0.7071, y: 0.7071 }, weight: 1, kind: "sink" },
 ] as const;
 
@@ -72,22 +90,31 @@ export type RiverLog = {
   bob: number;
 };
 
+export type Piranha = {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  phase: number;
+  size: number;
+  chomp: number;
+};
+
 export type RiverCourseState = {
   seed: number;
   elapsed: number;
   logs: RiverLog[];
+  piranhas: Piranha[];
   nextLogId: number;
   ridingLogId: number | null;
   onBank: BankSide | null;
   hopping: boolean;
   hopTime: number;
-  hopFrom: RiverVec;
-  hopTo: RiverVec;
-  hopTargetId: number | null;
+  hopVX: number;
+  hopVY: number;
   hopLift: number;
   spawnTimer: number;
   jumpPresses: number;
-  targetLogId: number | null;
   furthestX: number;
   hops: number;
   boards: number;
@@ -108,15 +135,14 @@ export type RiverPlayer = {
 };
 
 export type RiverInput = {
-  move: number;
-  aim: number;
+  moveX: number;
+  moveY: number;
 };
 
 export type RiverEvent =
   | { type: "hop" }
   | { type: "board"; kind: RiverRollKind }
   | { type: "spin"; direction: number }
-  | { type: "reach"; x: number }
   | { type: "warn" }
   | { type: "won" }
   | { type: "lost"; reason: RiverLossReason };
@@ -167,18 +193,17 @@ export function makeRiverCourse(seed = 7): RiverCourseState {
     seed: seed | 0 || 7,
     elapsed: 0,
     logs: [],
+    piranhas: [],
     nextLogId: 0,
     ridingLogId: null,
     onBank: "start",
     hopping: false,
     hopTime: 0,
-    hopFrom: { x: RIVER_START_X, y: RIVER_START_Y },
-    hopTo: { x: RIVER_START_X, y: RIVER_START_Y },
-    hopTargetId: null,
+    hopVX: 0,
+    hopVY: 0,
     hopLift: 0,
     spawnTimer: RIVER_SPAWN_INTERVAL,
     jumpPresses: 0,
-    targetLogId: null,
     furthestX: RIVER_START_X,
     hops: 0,
     boards: 0,
@@ -193,8 +218,8 @@ export function makeRiverCourse(seed = 7): RiverCourseState {
   // logs already drifting down the river.
   state.logs.push({
     id: state.nextLogId,
-    x: RIVER_LEFT_BANK + 82,
-    y: RIVER_START_Y + 8,
+    x: RIVER_LEFT_BANK + 78,
+    y: RIVER_START_Y + 6,
     roll: { x: 0.7071, y: -0.7071 },
     kind: "climb",
     spin: 0,
@@ -204,9 +229,21 @@ export function makeRiverCourse(seed = 7): RiverCourseState {
   });
   state.nextLogId += 1;
 
-  const rows = [90, 210, 300, 400, 470];
+  const rows = [70, 110, 168, 214, 268, 320, 372, 430, 480, 516];
   for (const row of rows) {
     state.logs.push(spawnLog(state, row));
+  }
+
+  for (let i = 0; i < RIVER_PIRANHA_COUNT; i += 1) {
+    state.piranhas.push({
+      x: RIVER_LEFT_BANK + 40 + nextRandom(state) * (RIVER_RIGHT_BANK - RIVER_LEFT_BANK - 80),
+      y: RIVER_TOP + 60 + nextRandom(state) * (RIVER_WATERFALL_Y - RIVER_TOP - 100),
+      vx: 0,
+      vy: 0,
+      phase: nextRandom(state) * Math.PI * 2,
+      size: 0.85 + nextRandom(state) * 0.4,
+      chomp: 0,
+    });
   }
   return state;
 }
@@ -251,52 +288,37 @@ function findLog(state: RiverCourseState, id: number | null) {
   return state.logs.find((log) => log.id === id) ?? null;
 }
 
-// The best log to hop onto: ahead of you and within a hop's reach, biased by the
-// aim (up = upstream, down = downstream) so you can choose to climb or press on.
-export function chooseHopTarget(state: RiverCourseState, fromX: number, fromY: number, aim: number) {
-  let best: RiverLog | null = null;
-  let bestScore = -Infinity;
-  for (const log of state.logs) {
-    if (log.id === state.ridingLogId) continue;
-    const dx = log.x - fromX;
-    const dy = log.y - fromY;
-    if (dx < RIVER_HOP_MIN_DX || dx > RIVER_HOP_MAX_DX) continue;
-    if (Math.abs(dy) > RIVER_HOP_MAX_DY) continue;
-    // Prefer forward reach; reward matching the aim, punish being swept lower.
-    let score = dx * 0.6 - Math.abs(dy) * 0.5;
-    if (aim < 0) score -= dy * 1.2;
-    else if (aim > 0) score += dy * 0.6;
-    else score -= Math.max(0, dy) * 0.6;
-    if (score > bestScore) {
-      bestScore = score;
-      best = log;
-    }
-  }
-  return best;
+// A helper for bots (and only bots): the logs a leap could plausibly reach from
+// here. The game itself never lines a jump up for the player.
+export function reachableLogs(state: RiverCourseState, fromX: number, fromY: number) {
+  const reach = RIVER_HOP_SPEED * RIVER_HOP_TIME;
+  return state.logs
+    .filter((log) => log.id !== state.ridingLogId)
+    .map((log) => ({ log, dist: Math.hypot(log.x - fromX, log.y - fromY) }))
+    .filter((entry) => entry.dist <= reach)
+    .sort((a, b) => a.dist - b.dist)
+    .map((entry) => entry.log);
 }
 
-function beginHop(state: RiverCourseState, player: RiverPlayer, aim: number, events: RiverEvent[]) {
-  const target = chooseHopTarget(state, player.x, player.y, aim);
+function beginHop(state: RiverCourseState, player: RiverPlayer, input: RiverInput, events: RiverEvent[]) {
+  let aimX = input.moveX;
+  let aimY = input.moveY;
+  if (Math.abs(aimX) + Math.abs(aimY) < 0.1) {
+    aimX = 1;
+    aimY = 0;
+  }
+  const len = Math.hypot(aimX, aimY) || 1;
   const current = findLog(state, state.ridingLogId);
-  // On the near bank with nothing in reach, a jump would only feed the piranhas
-  // — hold your ground and wait for a log to drift into range instead.
-  if (!current && !target) return;
   if (current) current.spin = 0;
   state.ridingLogId = null;
   state.onBank = null;
   state.hopping = true;
   state.hopTime = 0;
   state.hopLift = 0;
-  state.hopFrom = { x: player.x, y: player.y };
-  state.hopTargetId = target ? target.id : null;
-  if (target) {
-    state.hopTo = { x: target.x, y: target.y };
-  } else {
-    const aimY = aim === 0 ? 20 : aim * RIVER_HOP_BLIND_DY;
-    state.hopTo = { x: player.x + RIVER_HOP_BLIND_DX, y: player.y + aimY };
-  }
+  state.hopVX = (aimX / len) * RIVER_HOP_SPEED;
+  state.hopVY = (aimY / len) * RIVER_HOP_SPEED;
+  player.facing = state.hopVX >= 0 ? 1 : -1;
   state.hops += 1;
-  player.facing = 1;
   events.push({ type: "hop" });
 }
 
@@ -340,23 +362,12 @@ function lose(state: RiverCourseState, player: RiverPlayer, reason: RiverLossRea
 }
 
 function landHop(state: RiverCourseState, player: RiverPlayer, events: RiverEvent[]) {
-  const landing = state.hopTo;
-  player.x = landing.x;
-  player.y = landing.y;
-  state.hopLift = 0;
-
-  // The aimed-at log (still drifting) takes priority; then any log that happens
-  // to sit under the landing point.
-  const target = findLog(state, state.hopTargetId);
-  if (target && logContains(target, landing.x, landing.y, RIVER_GRAB_RADIUS + 6)) {
-    boardLog(state, player, target, events);
-    return;
-  }
+  // Wherever the leap actually ends is where you come down — no guidance.
   let covering: RiverLog | null = null;
   let coveringDist = Infinity;
   for (const log of state.logs) {
-    if (logContains(log, landing.x, landing.y)) {
-      const dist = Math.hypot(log.x - landing.x, log.y - landing.y);
+    if (logContains(log, player.x, player.y)) {
+      const dist = Math.hypot(log.x - player.x, log.y - player.y);
       if (dist < coveringDist) {
         coveringDist = dist;
         covering = log;
@@ -368,37 +379,54 @@ function landHop(state: RiverCourseState, player: RiverPlayer, events: RiverEven
     return;
   }
 
-  if (landing.x >= RIVER_RIGHT_BANK - RIVER_STEP_MARGIN && landing.y > RIVER_TOP - 20 && landing.y < RIVER_WATERFALL_Y) {
+  if (player.x >= RIVER_RIGHT_BANK - RIVER_STEP_MARGIN && player.y > RIVER_TOP - 20 && player.y < RIVER_WATERFALL_Y) {
     win(state, player, events);
     return;
   }
-  if (landing.x <= RIVER_LEFT_BANK + RIVER_STEP_MARGIN) {
-    // Fell back to the start bank — no progress, but the piranhas missed.
+  if (player.x <= RIVER_LEFT_BANK) {
+    // Came down on the near bank — no harm, walk and try again.
     state.onBank = "start";
     state.hopping = false;
-    player.x = clamp(landing.x, RIVER_START_X, RIVER_LEFT_BANK);
-    player.y = clamp(landing.y, RIVER_TOP + 20, RIVER_WATERFALL_Y - 30);
+    player.x = clamp(player.x, RIVER_BANK_MIN_X, RIVER_LEFT_BANK - 6);
+    player.y = clamp(player.y, RIVER_BANK_MIN_Y, RIVER_BANK_MAX_Y);
+    player.vx = 0;
+    player.vy = 0;
     player.onGround = true;
     return;
   }
   lose(state, player, "piranha", events);
 }
 
-function driftFreeLogs(state: RiverCourseState, dt: number) {
-  for (const log of state.logs) {
-    if (log.id === state.ridingLogId) continue;
-    log.y += RIVER_CURRENT * dt;
-    log.bob += dt * (1.4 + (log.id % 5) * 0.12);
-  }
-  // Recycle logs that have gone over the falls or wandered off.
-  state.logs = state.logs.filter((log) => log.y < RIVER_WATERFALL_Y + 70 || log.id === state.ridingLogId);
-
-  state.spawnTimer -= dt;
-  const wantSpawn = state.spawnTimer <= 0 && state.logs.length < RIVER_MAX_LOGS;
-  if (wantSpawn || state.logs.length < RIVER_MIN_LOGS) {
-    state.logs.push(spawnLog(state, RIVER_TOP + 6 + nextRandom(state) * 26));
-    state.spawnTimer = RIVER_SPAWN_INTERVAL;
-  }
+function stepPiranhas(state: RiverCourseState, player: RiverPlayer, dt: number) {
+  const frenzy = state.lost && state.lossReason === "piranha";
+  const near = riverHeadroom(player.y) < 0.42;
+  const targetX = player.x;
+  const targetY = player.y;
+  state.piranhas.forEach((p, index) => {
+    p.chomp = Math.max(0, p.chomp - dt);
+    p.phase += dt * (2.4 + p.size);
+    const dx = targetX - p.x;
+    const dy = targetY - p.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    // Orbit the explorer at a lurking distance, closing right in during a frenzy.
+    const lurk = frenzy ? 6 : RIVER_PIRANHA_LURK + (index % 3) * 14;
+    const pull = (dist - lurk) * 2.4;
+    const speed = (frenzy ? 2.2 : near ? 1.45 : 1) * RIVER_PIRANHA_SPEED;
+    const ux = dx / dist;
+    const uy = dy / dist;
+    // Tangential swirl so the shoal circles rather than piling on one point.
+    const swirl = frenzy ? 0.2 : 0.7;
+    const desiredX = ux * clamp(pull, -speed, speed) + -uy * speed * swirl * Math.sin(p.phase + index);
+    const desiredY = uy * clamp(pull, -speed, speed) + ux * speed * swirl * Math.sin(p.phase + index) + RIVER_CURRENT * 0.12;
+    p.vx += (desiredX - p.vx) * Math.min(1, dt * 3);
+    p.vy += (desiredY - p.vy) * Math.min(1, dt * 3);
+    p.x = clamp(p.x + p.vx * dt, RIVER_LEFT_BANK + 6, RIVER_RIGHT_BANK - 6);
+    p.y = p.y + p.vy * dt;
+    if (p.y > RIVER_WATERFALL_Y - 6) p.y = RIVER_WATERFALL_Y - 6;
+    if (p.y < RIVER_TOP + 10) p.y = RIVER_TOP + 10;
+    // A snap of the jaws when it gets close enough to threaten.
+    if (dist < 40 && p.chomp <= 0) p.chomp = 0.28;
+  });
 }
 
 export function stepRiverCourse(
@@ -413,10 +441,13 @@ export function stepRiverCourse(
 
   if (state.won || state.lost) {
     state.jumpPresses = 0;
-    if (state.lost && player.y < RIVER_BOTTOM) {
-      player.y = Math.min(RIVER_BOTTOM, player.y + dt * 220);
+    // The waterfall sweeps you over the edge; the piranhas hold you where you
+    // fell so the shoal can close in.
+    if (state.lost && state.lossReason === "waterfall" && player.y < RIVER_BOTTOM) {
+      player.y = Math.min(RIVER_BOTTOM, player.y + dt * 240);
     }
     driftFreeLogs(state, dt);
+    stepPiranhas(state, player, dt);
     return events;
   }
 
@@ -425,37 +456,41 @@ export function stepRiverCourse(
 
   if (state.hopping) {
     state.hopTime += dt;
-    // Keep tracking the target as it drifts downstream.
-    const target = findLog(state, state.hopTargetId);
-    if (target) {
-      state.hopTo = { x: target.x, y: target.y };
-    } else if (state.hopTargetId !== null) {
-      state.hopTargetId = null;
+    // Steer the leap in flight: a held arrow blends the velocity toward cruise
+    // speed that way, so the hop tracks where you point and coasts when you let
+    // go. It never outruns the cruise speed, so it won't blast past a log.
+    if (input.moveX !== 0 || input.moveY !== 0) {
+      const len = Math.hypot(input.moveX, input.moveY) || 1;
+      const targetVX = (input.moveX / len) * RIVER_HOP_SPEED;
+      const targetVY = (input.moveY / len) * RIVER_HOP_SPEED;
+      const blend = Math.min(1, dt * RIVER_HOP_STEER);
+      state.hopVX += (targetVX - state.hopVX) * blend;
+      state.hopVY += (targetVY - state.hopVY) * blend;
     }
+    player.x = clamp(player.x + state.hopVX * dt, RIVER_BANK_MIN_X, RIVER_RIGHT_BANK + RIVER_STEP_MARGIN);
+    player.y = clamp(player.y + state.hopVY * dt, RIVER_TOP, RIVER_WATERFALL_Y + 4);
+    player.vx = state.hopVX;
+    player.vy = state.hopVY;
+    player.facing = state.hopVX >= 0 ? 1 : -1;
     const t = clamp(state.hopTime / RIVER_HOP_TIME, 0, 1);
     state.hopLift = Math.sin(Math.PI * t) * RIVER_HOP_ARC;
-    player.x = state.hopFrom.x + (state.hopTo.x - state.hopFrom.x) * t;
-    player.y = state.hopFrom.y + (state.hopTo.y - state.hopFrom.y) * t;
-    player.facing = state.hopTo.x >= state.hopFrom.x ? 1 : -1;
-    if (t >= 1) {
-      landHop(state, player, events);
-    }
+    if (t >= 1) landHop(state, player, events);
     driftFreeLogs(state, dt);
+    stepPiranhas(state, player, dt);
     state.furthestX = Math.max(state.furthestX, player.x);
-    state.targetLogId = null;
     return events;
   }
 
   if (state.ridingLogId !== null) {
     const log = findLog(state, state.ridingLogId);
     if (!log) {
-      // Should not happen, but never leave the rider in limbo.
       lose(state, player, "piranha", events);
       driftFreeLogs(state, dt);
+      stepPiranhas(state, player, dt);
       return events;
     }
 
-    const spinInput = input.move;
+    const spinInput = input.moveX;
     const previousSpinSign = Math.sign(log.spin);
     if (spinInput !== 0) {
       log.spin = clamp(log.spin + spinInput * RIVER_SPIN_ACCEL * dt, -RIVER_SPIN_MAX, RIVER_SPIN_MAX);
@@ -469,7 +504,8 @@ export function stepRiverCourse(
 
     const thrust = log.spin * RIVER_SPIN_THRUST;
     const vx = thrust * log.roll.x;
-    const vy = RIVER_CURRENT + thrust * log.roll.y;
+    // The current always wins: spin can only slow the fall, never reverse it.
+    const vy = Math.max(RIVER_MIN_DRIFT, RIVER_CURRENT + thrust * log.roll.y);
     log.x = clamp(log.x + vx * dt, RIVER_LEFT_BANK - 6, RIVER_RIGHT_BANK + RIVER_STEP_MARGIN + 4);
     log.y = Math.max(RIVER_TOP, log.y + vy * dt);
 
@@ -479,9 +515,10 @@ export function stepRiverCourse(
     player.vy = vy;
     player.onGround = true;
 
-    if (jumpWanted(presses)) {
-      beginHop(state, player, input.aim, events);
+    if (presses > 0) {
+      beginHop(state, player, input, events);
       driftFreeLogs(state, dt);
+      stepPiranhas(state, player, dt);
       state.furthestX = Math.max(state.furthestX, player.x);
       return events;
     }
@@ -490,44 +527,59 @@ export function stepRiverCourse(
       player.y = log.y;
       lose(state, player, "waterfall", events);
       driftFreeLogs(state, dt);
+      stepPiranhas(state, player, dt);
       return events;
     }
 
     if (log.x >= RIVER_RIGHT_BANK - RIVER_STEP_MARGIN) {
       win(state, player, events);
       driftFreeLogs(state, dt);
+      stepPiranhas(state, player, dt);
       return events;
     }
 
-    if (!state.warned && log.y >= RIVER_WATERFALL_Y - 70) {
+    if (!state.warned && log.y >= RIVER_WATERFALL_Y - 78) {
       state.warned = true;
       events.push({ type: "warn" });
-    } else if (state.warned && log.y < RIVER_WATERFALL_Y - 120) {
+    } else if (state.warned && log.y < RIVER_WATERFALL_Y - 130) {
       state.warned = false;
     }
   } else if (state.onBank === "start") {
-    player.x = RIVER_START_X;
-    player.y = clamp(player.y, RIVER_TOP + 20, RIVER_WATERFALL_Y - 30);
-    player.vx = 0;
-    player.vy = 0;
+    // Walk the near bank freely to line up a jump.
+    const targetVX = input.moveX * RIVER_BANK_WALK;
+    const targetVY = input.moveY * RIVER_BANK_WALK;
+    player.vx += (targetVX - player.vx) * Math.min(1, dt * 16);
+    player.vy += (targetVY - player.vy) * Math.min(1, dt * 16);
+    if (!input.moveX) player.vx *= Math.pow(0.02, dt);
+    if (!input.moveY) player.vy *= Math.pow(0.02, dt);
+    player.x = clamp(player.x + player.vx * dt, RIVER_BANK_MIN_X, RIVER_LEFT_BANK - 6);
+    player.y = clamp(player.y + player.vy * dt, RIVER_BANK_MIN_Y, RIVER_BANK_MAX_Y);
+    if (input.moveX) player.facing = input.moveX > 0 ? 1 : -1;
     player.onGround = true;
-    if (jumpWanted(presses)) {
-      beginHop(state, player, input.aim, events);
-    }
+    if (presses > 0) beginHop(state, player, input, events);
   }
 
   driftFreeLogs(state, dt);
+  stepPiranhas(state, player, dt);
   state.furthestX = Math.max(state.furthestX, player.x);
-
-  // A quiet hint for the renderer: which log a hop would grab right now.
-  const preview = chooseHopTarget(state, player.x, player.y, input.aim);
-  state.targetLogId = preview ? preview.id : null;
-
   return events;
 }
 
-function jumpWanted(presses: number) {
-  return presses > 0;
+function driftFreeLogs(state: RiverCourseState, dt: number) {
+  for (const log of state.logs) {
+    if (log.id === state.ridingLogId) continue;
+    log.y += RIVER_CURRENT * dt;
+    log.bob += dt * (1.4 + (log.id % 5) * 0.12);
+  }
+  // Recycle logs that have gone over the falls or wandered off.
+  state.logs = state.logs.filter((log) => log.y < RIVER_WATERFALL_Y + 70 || log.id === state.ridingLogId);
+
+  state.spawnTimer -= dt;
+  const wantSpawn = state.spawnTimer <= 0 && state.logs.length < RIVER_MAX_LOGS;
+  if (wantSpawn || state.logs.length < RIVER_MIN_LOGS) {
+    state.logs.push(spawnLog(state, RIVER_TOP + 6 + nextRandom(state) * 24));
+    state.spawnTimer = RIVER_SPAWN_INTERVAL;
+  }
 }
 
 export function ridingLog(state: RiverCourseState) {
