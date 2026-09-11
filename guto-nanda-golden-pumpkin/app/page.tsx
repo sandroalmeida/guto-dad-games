@@ -95,6 +95,7 @@ import {
   riverHeadroom,
   riverProgress,
   stepRiverCourse,
+  type Piranha,
   type RiverCourseState,
   type RiverEvent,
   type RiverLog,
@@ -4590,7 +4591,6 @@ function drawRiverLog(
   log: RiverLog,
   elapsed: number,
   ridden: boolean,
-  highlighted: boolean,
 ) {
   const angle = logAxisAngle(log);
   const half = log.length / 2;
@@ -4608,17 +4608,6 @@ function drawRiverLog(
   ctx.ellipse(3, 5, half + 6, r + 4, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
-
-  if (highlighted) {
-    ctx.save();
-    ctx.rotate(angle);
-    const pulse = (Math.sin(elapsed * 7) + 1) / 2;
-    ctx.strokeStyle = `rgba(255,236,150,${0.5 + pulse * 0.4})`;
-    ctx.lineWidth = 3;
-    roundedRect(ctx, -half - 7, -r - 7, log.length + 14, r * 2 + 14, r + 7);
-    ctx.stroke();
-    ctx.restore();
-  }
 
   ctx.rotate(angle);
 
@@ -4687,6 +4676,122 @@ function drawRiverLog(
       ctx.stroke();
     }
   }
+
+  ctx.restore();
+}
+
+function drawPiranha(
+  ctx: CanvasRenderingContext2D,
+  p: Piranha,
+  player: Player,
+) {
+  const face = player.x >= p.x ? 1 : -1;
+  const gnash = p.chomp > 0 ? Math.min(1, p.chomp / 0.28) : Math.max(0, Math.sin(p.phase * 2)) * 0.2;
+  const wag = Math.sin(p.phase * 3) * 3;
+
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  // Menacing shadow of the shoal under the surface
+  ctx.fillStyle = "rgba(4,30,34,.3)";
+  ctx.beginPath();
+  ctx.ellipse(0, 3, 16 * p.size, 6 * p.size, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.scale(face * p.size, p.size);
+
+  // Forked tail, wagging
+  ctx.fillStyle = "#37564f";
+  ctx.beginPath();
+  ctx.moveTo(-10, 0);
+  ctx.lineTo(-21, -8 + wag);
+  ctx.lineTo(-15, 0);
+  ctx.lineTo(-21, 8 + wag);
+  ctx.closePath();
+  ctx.fill();
+
+  // Spiny dorsal and pelvic fins
+  ctx.fillStyle = "#2c4842";
+  ctx.beginPath();
+  ctx.moveTo(-4, -6);
+  ctx.lineTo(2, -12);
+  ctx.lineTo(5, -6);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(-2, 6);
+  ctx.lineTo(2, 11);
+  ctx.lineTo(6, 6);
+  ctx.closePath();
+  ctx.fill();
+
+  // Body — dark steel back, deep-red belly
+  const body = ctx.createLinearGradient(0, -8, 0, 8);
+  body.addColorStop(0, "#42615a");
+  body.addColorStop(0.55, "#3a544d");
+  body.addColorStop(0.75, "#7a2f28");
+  body.addColorStop(1, "#a83a2c");
+  ctx.fillStyle = body;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 14, 8, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // A cold sheen along the back
+  ctx.fillStyle = "rgba(190,225,220,.18)";
+  ctx.beginPath();
+  ctx.ellipse(-1, -3.5, 9, 2.6, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // The blunt snout and gaping, toothy jaw
+  ctx.fillStyle = "#3a544d";
+  ctx.beginPath();
+  ctx.moveTo(8, -6.5);
+  ctx.quadraticCurveTo(18, -5, 17, -1 - gnash * 3);
+  ctx.lineTo(17, 1 + gnash * 3);
+  ctx.quadraticCurveTo(18, 5, 8, 6.5);
+  ctx.closePath();
+  ctx.fill();
+  // Mouth interior
+  ctx.fillStyle = "#2a1113";
+  ctx.beginPath();
+  ctx.moveTo(9, -1.5 - gnash * 2.5);
+  ctx.lineTo(17.5, -1 - gnash * 3.4);
+  ctx.lineTo(17.5, 1 + gnash * 3.4);
+  ctx.lineTo(9, 1.5 + gnash * 2.5);
+  ctx.closePath();
+  ctx.fill();
+  // Big interlocking teeth, top and bottom rows
+  ctx.fillStyle = "#fdf6e6";
+  const topJaw = -1.5 - gnash * 2.6;
+  const botJaw = 1.5 + gnash * 2.6;
+  for (let i = 0; i < 4; i += 1) {
+    const tx = 10.5 + i * 1.9;
+    ctx.beginPath();
+    ctx.moveTo(tx, topJaw);
+    ctx.lineTo(tx + 0.9, topJaw + 2.4);
+    ctx.lineTo(tx + 1.8, topJaw);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(tx, botJaw);
+    ctx.lineTo(tx + 0.9, botJaw - 2.4);
+    ctx.lineTo(tx + 1.8, botJaw);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // A hard, angry eye with a heavy brow
+  ctx.fillStyle = "#ffcf33";
+  ctx.beginPath();
+  ctx.arc(4, -2.4, 2.7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#161010";
+  ctx.beginPath();
+  ctx.arc(4.7, -2.4, 1.4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#20120f";
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.moveTo(0.5, -5.4);
+  ctx.lineTo(7, -3.2);
+  ctx.stroke();
 
   ctx.restore();
 }
@@ -4847,39 +4952,8 @@ function drawRiverWorld(
     ctx.fill();
   }
 
-  // Piranhas prowling the open water
-  for (let f = 0; f < 12; f += 1) {
-    const baseX = RIVER_LEFT_BANK + 40 + ((f * 173) % (RIVER_RIGHT_BANK - RIVER_LEFT_BANK - 80));
-    const baseY = RIVER_TOP + 60 + ((f * 227) % (RIVER_WATERFALL_Y - RIVER_TOP - 90));
-    const fx = baseX + Math.sin(elapsed * 1.4 + f * 1.7) * 26;
-    const fy = baseY + Math.cos(elapsed * 0.9 + f) * 14 + elapsed * 6;
-    const wrappedY = RIVER_TOP + 50 + ((fy - RIVER_TOP - 50) % (RIVER_WATERFALL_Y - RIVER_TOP - 70));
-    // Skip fish that would sit under the player's log for readability
-    if (Math.hypot(fx - player.x, wrappedY - player.y) < 46) continue;
-    const dir = Math.sin(elapsed * 1.4 + f * 1.7) >= 0 ? 1 : -1;
-    ctx.save();
-    ctx.translate(fx, wrappedY);
-    ctx.scale(dir, 1);
-    ctx.fillStyle = "rgba(28,54,58,.85)";
-    ctx.beginPath();
-    ctx.ellipse(0, 0, 10, 4.4, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(-9, 0);
-    ctx.lineTo(-16, -5);
-    ctx.lineTo(-16, 5);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = "rgba(150,40,36,.8)";
-    ctx.beginPath();
-    ctx.ellipse(3, 1.6, 5, 2, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#ffd34a";
-    ctx.beginPath();
-    ctx.arc(6, -1, 1.3, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
+  // The hungry shoal, prowling and closing in on the explorer
+  river.piranhas.forEach((p) => drawPiranha(ctx, p, player));
 
   // The waterfall lip and the churn beyond it
   ctx.fillStyle = "rgba(232,250,255,.5)";
@@ -5008,10 +5082,10 @@ function drawRiverWorld(
   const ridingId = river.ridingLogId;
   river.logs.forEach((log) => {
     if (log.id === ridingId) return;
-    drawRiverLog(ctx, log, elapsed, false, log.id === river.targetLogId && !river.hopping);
+    drawRiverLog(ctx, log, elapsed, false);
   });
   const ridden = ridingLog(river);
-  if (ridden) drawRiverLog(ctx, ridden, elapsed, true, false);
+  if (ridden) drawRiverLog(ctx, ridden, elapsed, true);
 
   // The companion cheers from the near bank
   drawTopDownCharacter(ctx, RIVER_START_X - 24, RIVER_START_Y + 150, companion, "forward", elapsed, 0, false);
@@ -6043,23 +6117,22 @@ export default function Home() {
           }
         } else {
           const river = game.river;
-          const aim = (down ? 1 : 0) - (up ? 1 : 0);
-          const events = stepRiverCourse(river, player, { move, aim }, dt);
+          const events = stepRiverCourse(river, player, { moveX: move, moveY: (down ? 1 : 0) - (up ? 1 : 0) }, dt);
           events.forEach((event: RiverEvent) => {
             switch (event.type) {
               case "hop":
-                setCourseStatus("Hop! Land on a log — ←→ to spin it");
+                setCourseStatus("Hop! Steer with the arrows and land on a log");
                 playTone(392, 0.06, "square");
                 break;
               case "board":
                 setCourseStatus(
                   event.kind === "climb"
-                    ? "A slanted log — spin → to cross AND climb away from the falls"
+                    ? "A slanted log — spin → to cross while it sinks slowest"
                     : event.kind === "brake"
-                      ? "A crosswise log — spin → to fight the current and gain height"
+                      ? "A crosswise log — spin → to slow the fall, but you won't cross on it"
                       : event.kind === "sink"
                         ? "Careful — spinning → drags this one downstream; hop off soon"
-                        : "A straight log — spin → to cross, but the current keeps pulling you down",
+                        : "A straight log — spin → to cross, but the current pulls you down fast",
                 );
                 playTone(440, 0.06, "square");
                 window.setTimeout(() => playTone(560, 0.06, "square"), 60);
@@ -6068,7 +6141,7 @@ export default function Home() {
                 playTone(event.direction > 0 ? 320 : 232, 0.04, "square");
                 break;
               case "warn":
-                setCourseStatus("The waterfall is close — spin to climb back up, or hop to a slanted log!");
+                setCourseStatus("The waterfall is close — hop UP to a fresher log, now!");
                 playTone(200, 0.16, "sawtooth");
                 window.setTimeout(() => playTone(150, 0.16, "sawtooth"), 150);
                 break;
@@ -6087,8 +6160,8 @@ export default function Home() {
                 setOverlay("gameover");
                 setCourseStatus(
                   event.reason === "waterfall"
-                    ? "Swept over the waterfall!"
-                    : "Splash — into the piranhas!",
+                    ? "You fell down the waterfall… too bad!"
+                    : "You became piranha lunch… ouch!",
                 );
                 playTone(event.reason === "waterfall" ? 130 : 90, 0.42, "sawtooth");
                 break;
@@ -6102,16 +6175,14 @@ export default function Home() {
             const headroom = riverHeadroom(player.y);
             setCourseStatus(
               river.onBank === "start"
-                ? "Press SPACE to hop onto the first log"
-                : headroom < 0.32
-                  ? "The falls are close! Spin to climb, or hop to a slanted log"
-                  : river.targetLogId !== null
-                    ? "SPACE hops to the highlighted log — hold ↑ to aim upstream"
-                    : log
-                      ? player.x > (RIVER_LEFT_BANK + RIVER_RIGHT_BANK) / 2
-                        ? "Over halfway — steer for the far bank"
-                        : "Spin ←→ to steer — most logs carry you toward the far bank"
-                      : "Find a log to land on",
+                ? "Walk with the arrows, then aim SPACE to hop onto a log"
+                : headroom < 0.34
+                  ? "The falls are close! Hop UP to a higher log — SPACE + arrows"
+                  : log
+                    ? player.x > (RIVER_LEFT_BANK + RIVER_RIGHT_BANK) / 2
+                      ? "Over halfway — keep hopping up and steering for the far bank"
+                      : "Spin ←→ to cross, then hop UP before the current drags you down"
+                    : "Steer with the arrows and come down on a log",
             );
           }
         }
@@ -6553,11 +6624,12 @@ export default function Home() {
                         are shorter than the wall you are stuck down there. Hold <strong>X</strong> to run,
                         press <strong>Z + SPACE</strong> to vault the boulders, and never stand still.</>
                       ) : (
-                        <>Press <strong>SPACE</strong> to hop onto a floating log. Spin it with{" "}
-                        <strong>←</strong> and <strong>→</strong>: most logs carry you toward the far bank, and
-                        the <strong>slanted</strong> ones also climb away from the falls. The current never
-                        stops pulling you down, so keep spinning, and <strong>hop</strong> to a fresh log
-                        before yours drifts too low — a missed hop drops you in with the piranhas.</>
+                        <>Walk the near bank with the arrows, then <strong>aim SPACE</strong> to hop onto a
+                        floating log and steer the leap with the arrows. On a log the arrows{" "}
+                        <strong>spin</strong> it: most logs carry you toward the far bank. But the current
+                        always wins — spin only <strong>slows the fall</strong>, it never climbs — so before
+                        your log sinks too low you must <strong>hop UP</strong> to a fresher, higher one.
+                        Miss a log and the piranhas get you; drift over the lip and it's the falls.</>
                       )}
                     </p>
 
@@ -6594,15 +6666,15 @@ export default function Home() {
                     <div className="control-row">
                       <span className="key-pair"><kbd>←→</kbd>{(activeCourse === 1 || activeCourse === 5 || activeCourse === 7) && <kbd>↑↓</kbd>}</span>
                       <span>
-                        <b>{byCourse(activeCourse, "Move / climb", "Move / steer", "Move", "Walk", "Hop a row", "Move / run", "Spin the log")}</b>
-                        <small>{byCourse(activeCourse, "Steer in air, climb on a vine", "Control every jump in the air", "Walk the clearing, chase rodents", "Position yourself on a back or the bank edge", "Forward or back, onto whatever is there", "Walk off the ledge, cross the floor, steer in the air", "→ forward, ← back — build, cancel, or reverse the spin")}</small>
+                        <b>{byCourse(activeCourse, "Move / climb", "Move / steer", "Move", "Walk", "Hop a row", "Move / run", "Spin / walk / steer")}</b>
+                        <small>{byCourse(activeCourse, "Steer in air, climb on a vine", "Control every jump in the air", "Walk the clearing, chase rodents", "Position yourself on a back or the bank edge", "Forward or back, onto whatever is there", "Walk off the ledge, cross the floor, steer in the air", "On a log: → forward / ← back spin. On the bank or mid-jump: move & aim")}</small>
                       </span>
                     </div>
                     <div className="control-row">
                       <span className="wide-key"><kbd>SPACE</kbd></span>
                       <span>
                         <b>{byCourse(activeCourse, "Jump / release", "Jump / stomp", "Grab / drop / struggle", "Short hop", "Hop forward", "Hop", "Hop to a log")}</b>
-                        <small>{byCourse(activeCourse, "Leap at the swing’s edge", "Land on monkeys to make them dizzy", "Pick up what’s nearest; mash to break free", "Bank → mouth or head · head → back · back → next head", "Same as →, one row at a time", "Lifts the stilts clear of a bite — too low for a boulder", "Leaps to the highlighted log — miss and it's the piranhas")}</small>
+                        <small>{byCourse(activeCourse, "Leap at the swing’s edge", "Land on monkeys to make them dizzy", "Pick up what’s nearest; mash to break free", "Bank → mouth or head · head → back · back → next head", "Same as →, one row at a time", "Lifts the stilts clear of a bite — too low for a boulder", "Aim and steer it onto a log — miss and it's the piranhas")}</small>
                       </span>
                     </div>
                     {activeCourse === 1 && (
@@ -6638,7 +6710,7 @@ export default function Home() {
                     {activeCourse === 7 && (
                       <div className="control-row important-control">
                         <span className="wide-key"><kbd>↑↓</kbd></span>
-                        <span><b>Aim your hop</b><small>Hold ↑ before SPACE to jump upstream, away from the falls</small></span>
+                        <span><b>Walk &amp; aim</b><small>Move on the bank, and steer your jump through the air onto a log</small></span>
                       </div>
                     )}
                     {activeCourse !== 4 && activeCourse !== 5 && activeCourse !== 7 && (
@@ -6659,7 +6731,7 @@ export default function Home() {
                           "Stand at the rear of a back before a short hop, or it lands in the next mouth. Hold Z until the meter is green, then SPACE for a long jump straight to the next back.",
                           "Stepping on a snake and hopping straight back to your root is always safe — use it to peek at every snake in the maze, then memorize the way.",
                           "Watch the WALL mark on the stilt meter: above it you can climb out, below it you can't. Pigs only bite planted stilts, and the top of a boulder is out of their reach — rest there until the pig wanders off, then run.",
-                          "A log's angle decides everything: straight logs cross fast but sink, slanted logs cross AND climb. Watch the DISTANCE TO FALLS meter — when it runs low, get on a slanted log and spin → to fight your way back up.",
+                          "No log ever beats the current — spinning only slows how fast you sink. When the DISTANCE TO FALLS meter runs low, don't try to spin your way up: aim a jump at a higher log and HOP up to it. Nothing lines the jump up for you, so pick your moment.",
                         )}
                       </p>
                     </div>
@@ -6704,8 +6776,8 @@ export default function Home() {
                       ? "Too short to climb out!"
                       : "The pigs chewed through your stilts!",
                     riverLoss === "waterfall"
-                      ? "Swept over the waterfall!"
-                      : "Splash — right into the piranhas!",
+                      ? "You fell down the waterfall… too bad!"
+                      : "You became piranha lunch… ouch!",
                   )}
                 </h2>
                 <p>
@@ -6730,8 +6802,8 @@ export default function Home() {
                       ? "Every bite chews the stilts shorter, and once they're shorter than the valley wall there is no way up. Keep the meter above the WALL mark: run, vault early, and rest on a rock when a pig is right under you."
                       : "The stilts only take so many bites. Hold X to run, hop or vault to lift the legs clear, and never stand still on the floor — a boulder you haven't vaulted yet is where the pigs catch you.",
                     riverLoss === "waterfall"
-                      ? "The current never rests. Don't ride a straight log too long — it only sinks. Spin a slanted log with → to climb, and hop upstream (hold ↑) before the DISTANCE TO FALLS meter runs out."
-                      : "Only hop when a log is highlighted — that's the one your jump will grab. With nothing in reach, keep spinning your log across instead, and never leap into open water.",
+                      ? "The current always wins — no log climbs, it only slows the fall. Before the DISTANCE TO FALLS meter runs out, aim a jump at a higher log and HOP up. You can't spin your way back up."
+                      : "Only jump when you can see a log to land on, and steer the leap with the arrows all the way onto it. Leap into open water and the piranhas are waiting.",
                   )}
                 </p>
                 <button className="primary-button compact" onClick={restartCourse} type="button">
@@ -6900,10 +6972,10 @@ export default function Home() {
           </>
         ) : (
           <>
-            <div><kbd>←→</kbd><span><b>SPIN THE LOG</b> → forward, ← back to steer</span></div>
-            <div><kbd className="long">SPACE</kbd><span><b>HOP</b> Jump to the highlighted log</span></div>
-            <div><kbd className="long accent">↑</kbd><span><b>AIM UPSTREAM</b> Hold before SPACE to climb</span></div>
-            <div><kbd className="long">FALLS</kbd><span><b>THE CURRENT PULLS</b> Slanted logs climb back up</span></div>
+            <div><kbd>←→</kbd><span><b>SPIN / WALK</b> Spin the log, or walk the bank</span></div>
+            <div><kbd className="long">SPACE</kbd><span><b>HOP</b> Aim &amp; steer onto a log</span></div>
+            <div><kbd className="long accent">↑↓</kbd><span><b>STEER THE JUMP</b> Guide the leap in the air</span></div>
+            <div><kbd className="long">FALLS</kbd><span><b>THE CURRENT WINS</b> Hop UP before you sink</span></div>
           </>
         )}
       </section>
