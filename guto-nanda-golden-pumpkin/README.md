@@ -6,9 +6,9 @@ Golden Pumpkin.
 
 ## Current build
 
-- Courses 1 through 6 are playable end to end: **The Crocodile Canal**,
+- Courses 1 through 7 are playable end to end: **The Crocodile Canal**,
   **The Pushing Monkeys**, **The Diving Eagles**, **The Hippo Crossing**,
-  **The Sleeping Snakes**, and **The Wild Pig Valley**.
+  **The Sleeping Snakes**, **The Wild Pig Valley**, and **The Piranha River**.
 - Choose Guto or Nanda as the active explorer; their partner cheers from shore.
 - Run, jump, catch any part of a swinging vine, climb it, and reach the far bank.
 - Animated crocodiles, water, procedural jungle scenery, sound cues, game-over,
@@ -40,6 +40,16 @@ Golden Pumpkin.
   (cleared with a run-up `Z + Space` vault, or used as a bite-proof perch), bite
   at a calm cadence with a moment to line up and a pause to chew, and the whole
   herd is let loose only once the stilts are too short.
+- Course 7 is a top-down river seen from above, flowing toward a waterfall at
+  the bottom of the screen. Floating logs drift down the current; hop onto one
+  and spin it left or right to steer. A log's angle decides everything: straight
+  logs cross fast but keep sinking with the current, slanted logs cross *and*
+  climb away from the falls, and a crosswise log is pure upstream. The spin is a
+  managed velocity — an arrow winds it up, the opposite arrow bleeds it off or
+  reverses it, and it decays on its own. Hop between logs to keep progressing;
+  miss and land in open water and the piranhas get you, drift over the lip and
+  it's the falls. A DISTANCE TO FALLS meter, a LOG SPIN gauge, and a crossing
+  bar keep the state readable.
 
 ## Controls
 
@@ -112,6 +122,19 @@ where no pig can reach you — rest there until the pig wanders off. Each pig
 keeps to its own stretch of floor between the boulders, needs a moment to line
 up a bite, and stops to chew after one, so keep moving and no more than a bite
 or two should ever land.
+
+In Course 7, seen from above, the river slides top to bottom toward a waterfall
+and the crossing runs left to right. Press `Space` on the near bank to hop onto
+the highlighted log, then spin it with `←` / `→`: `→` builds forward spin, `←`
+bleeds it off, cancels it, or reverses it, and letting go lets it wind down.
+Forward spin drives you along the log's roll — straight (vertical) logs carry
+you across but the current keeps pulling you toward the falls, slanted logs
+carry you across *and* upstream, and a crosswise (horizontal) log fights the
+current without crossing. `Space` hops to the highlighted log in reach — hold
+`↑` first to aim the hop upstream, away from the falls. Watch the DISTANCE TO
+FALLS meter: when it runs low, get onto a slanted log and spin `→` to climb.
+Fall in the water and the piranhas end the attempt; drift over the waterfall
+lip and you go over. Reach the far bank to finish.
 
 ## Run locally
 
