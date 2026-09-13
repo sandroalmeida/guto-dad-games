@@ -42,7 +42,9 @@ test("renders the Golden Pumpkin game shell", async () => {
   assert.match(html, /05 · SNAKES/);
   assert.match(html, /06 · PIGS/);
   assert.match(html, /07 · PIRANHAS/);
-  assert.match(html, /COURSES 01–07 READY/);
+  assert.match(html, /08 · LION/);
+  assert.match(html, /The Lion(&#x27;|’|')s Watch/);
+  assert.match(html, /COURSES 01–08 READY/);
   assert.match(html, /reaches one second/i);
   assert.match(html, /two barriers/i);
   assert.match(html, /Capuchin Monkeys/i);
@@ -52,6 +54,10 @@ test("renders the Golden Pumpkin game shell", async () => {
   assert.match(html, /Piranhas/i);
   assert.match(html, /floating logs?/i);
   assert.match(html, /waterfall/i);
+  assert.match(html, /savanna/i);
+  assert.match(html, /Golden Pumpkin/);
+  assert.doesNotMatch(html, /The Golden Nest/);
+  assert.doesNotMatch(html, /Harpy Eagle/);
   assert.doesNotMatch(html, /Jaguar’s Gaze/);
   assert.doesNotMatch(html, /Coils in the Ruins/);
   assert.doesNotMatch(html, /The Silver Web/);
@@ -196,7 +202,7 @@ test("wires The Sleeping Snakes into the page", async () => {
     "utf8",
   );
   assert.match(source, /from "\.\/snake-course"/);
-  assert.match(source, /type CourseNumber = 1 \| 2 \| 3 \| 4 \| 5 \| 6 \| 7;/);
+  assert.match(source, /type CourseNumber = 1 \| 2 \| 3 \| 4 \| 5 \| 6 \| 7 \| 8;/);
   assert.match(source, /game\.snake\.pendingMove = move/);
   assert.match(source, /drawSnakeWorld\(context, game, activeCharacter\)/);
   assert.match(source, /PLAY COURSE 05/);
@@ -224,7 +230,7 @@ test("wires The Wild Pig Valley into the page", async () => {
     "utf8",
   );
   assert.match(source, /from "\.\/pig-course"/);
-  assert.match(source, /type CourseNumber = 1 \| 2 \| 3 \| 4 \| 5 \| 6 \| 7;/);
+  assert.match(source, /type CourseNumber = 1 \| 2 \| 3 \| 4 \| 5 \| 6 \| 7 \| 8;/);
   assert.match(source, /game\.pig\.jumpPresses \+= 1/);
   assert.match(source, /game\.pig\.jumpWithHold = keysRef\.current\.has\("KeyZ"\)/);
   assert.match(source, /drawPigWorld\(context, game, activeCharacter\)/);
@@ -234,7 +240,7 @@ test("wires The Wild Pig Valley into the page", async () => {
   assert.match(course, /export const PIG_VAULT_VY = -650;/);
   assert.match(course, /export const PIG_LEDGE_Y = PIG_FLOOR_Y - PIG_VALLEY_DEPTH;/, "the ledges sit above the valley floor");
   assert.match(course, /export const PIG_CLIMB_LENGTH = PIG_VALLEY_DEPTH - PIG_CLIMB_REACH;/, "stilts must reach the wall height to climb out");
-  assert.match(source, /PIG_LEDGE_Y, RIVER_START_Y\)/, "the explorer starts on the high ground");
+  assert.match(source, /PIG_LEDGE_Y, RIVER_START_Y, LION_GROUND_Y - 40\)/, "the explorer starts on the high ground");
   assert.match(source, /canClimbOut\(field\)/, "the HUD reports whether the stilts still clear the wall");
 
   const bouldersStart = course.indexOf("export const pigBoulders = [");
@@ -264,7 +270,7 @@ test("wires The Piranha River into the page", async () => {
     "utf8",
   );
   assert.match(source, /from "\.\/river-course"/);
-  assert.match(source, /type CourseNumber = 1 \| 2 \| 3 \| 4 \| 5 \| 6 \| 7;/);
+  assert.match(source, /type CourseNumber = 1 \| 2 \| 3 \| 4 \| 5 \| 6 \| 7 \| 8;/);
   assert.match(source, /game\.river\.jumpPresses \+= 1/);
   assert.match(source, /drawRiverWorld\(context, game, activeCharacter\)/);
   assert.match(source, /07 · PIRANHAS/);
@@ -282,6 +288,46 @@ test("wires The Piranha River into the page", async () => {
   assert.equal(kinds, 4, "the river floats four kinds of log");
 
   for (const renderer of ["drawRiverLog", "drawPiranha", "drawRiverHud", "drawRiverWorld"]) {
+    const start = source.indexOf(`function ${renderer}(`);
+    assert.notEqual(start, -1, `${renderer} should exist`);
+    const end = source.indexOf("\nfunction ", start + 1);
+    const body = source.slice(start, end === -1 ? undefined : end);
+    const saves = body.match(/\bctx\.save\(\);/g)?.length ?? 0;
+    const restores = body.match(/\bctx\.restore\(\);/g)?.length ?? 0;
+    assert.equal(restores, saves, `${renderer} must restore every saved transform`);
+  }
+});
+
+test("wires The Lion's Watch into the page as the finale", async () => {
+  const source = await readFile(
+    new URL("../app/page.tsx", import.meta.url),
+    "utf8",
+  );
+  const course = await readFile(
+    new URL("../app/lion-course.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /from "\.\/lion-course"/);
+  assert.match(source, /type CourseNumber = 1 \| 2 \| 3 \| 4 \| 5 \| 6 \| 7 \| 8;/);
+  assert.match(source, /game\.lion\.jumpPresses \+= 1/);
+  assert.match(source, /drawLionWorld\(context, game, activeCharacter\)/);
+  assert.match(source, /08 · LION/);
+  assert.match(source, /PLAY COURSE 08/);
+  assert.match(source, /stepLionCourse\(savanna, player, \{ move, run: running, up, down \}, dt\)/);
+  assert.match(source, /EXPEDITION COMPLETE/, "winning the last course completes the expedition");
+  assert.match(course, /export const LION_CHASE_SPEED = 318;/);
+  assert.match(course, /export const LION_RUN_SPEED = 262;/, "a charging lion outruns a running explorer");
+  assert.match(course, /export const LION_PATIENCE = 3\.6;/);
+  assert.match(course, /export const LION_SIGHT = 560;/);
+  assert.match(course, /return state\.perch === "perched";/, "only standing on a branch counts as shelter");
+  assert.match(course, /Math\.abs\(dx\) < LION_NOSE \|\| Math\.sign\(dx\) === Math\.sign\(lion\.facing\)/, "the lion only sees what it faces");
+
+  const treesStart = course.indexOf("export const lionTrees = [");
+  const treesEnd = course.indexOf("] as const;", treesStart);
+  const trees = course.slice(treesStart, treesEnd).match(/\{ x:/g)?.length ?? 0;
+  assert.equal(trees, 3, "three acacia trees give cover on the savanna");
+
+  for (const renderer of ["drawAcacia", "drawLion", "drawLionGaze", "drawGoldenPumpkin", "drawLionHud", "drawLionWorld"]) {
     const start = source.indexOf(`function ${renderer}(`);
     assert.notEqual(start, -1, `${renderer} should exist`);
     const end = source.indexOf("\nfunction ", start + 1);
