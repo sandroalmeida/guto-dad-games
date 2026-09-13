@@ -63,9 +63,14 @@ Golden Pumpkin.
   roars beneath it, and after a few seconds loses interest and wanders off.
   Getting down is the same two moves in reverse: `↓` to hang, `Space` to drop.
   A gaze cone on the ground, a THE LION panel with a losing-interest timer, and
-  a progress bar to the pumpkin keep the decision readable. Winning plays a
-  celebration on the canvas — both explorers at the shrine, the pumpkin rising
-  in light — before the EXPEDITION COMPLETE card.
+  a crossing bar keep the decision readable. The Golden Pumpkin is not on the
+  savanna: the far end is a trail gate, and beating the lion starts the ending
+  on the canvas — both explorers climb a winding path up the mountain (the
+  camera follows and the sky turns to dusk), find the Golden Pumpkin on the
+  summit, lift it together, and celebrate with fireworks, confetti and
+  balloons; the screen rises into a glowing close-up of the pumpkin, THE END
+  appears, and then the EXPEDITION COMPLETE card offers to play again from
+  Course 01. `Space` skips the ending after a couple of seconds.
 
 ## Controls
 
@@ -168,7 +173,8 @@ three and a half seconds, then wanders off. Press `↓` to hang from the branch
 and `Space` to drop back to the grass. The rule that wins: go when the lion is
 looking away **and** is not between you and the next tree — a lion walking to
 the same tree you are running to will turn round right when you get there.
-Reach the shrine to lift the Golden Pumpkin and complete the expedition.
+Reach the trail gate and the ending plays: the last climb, the Golden Pumpkin,
+and the celebration.
 
 ## Run locally
 
