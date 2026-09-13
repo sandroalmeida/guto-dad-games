@@ -101,10 +101,34 @@ import {
   type RiverLog,
   type RiverLossReason,
 } from "./river-course";
+import {
+  LION_BRANCH_Y,
+  LION_FINISH_X,
+  LION_GROUND_Y,
+  LION_PATIENCE,
+  LION_PATIENCE_JITTER,
+  LION_PLAYER_START_X,
+  LION_SAFE_LEFT,
+  LION_SAFE_RIGHT,
+  LION_SIGHT,
+  inSafeZone,
+  isSheltered,
+  lionFacesPlayer,
+  lionProgress,
+  lionSeesPlayer,
+  makeLionCourse,
+  patienceLeft,
+  stepLionCourse,
+  type Lion,
+  type LionCourseState,
+  type LionEvent,
+  type LionLossReason,
+  type LionTree,
+} from "./lion-course";
 
 type Character = "guto" | "nanda";
 type Overlay = "briefing" | "gameover" | "won" | null;
-type CourseNumber = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+type CourseNumber = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 type Vine = {
   x: number;
@@ -162,6 +186,7 @@ type GameState = {
   snake: SnakeCourseState;
   pig: PigCourseState;
   river: RiverCourseState;
+  lion: LionCourseState;
   notice: string;
   noticeTimer: number;
   running: boolean;
@@ -289,16 +314,16 @@ const courses = [
   },
   {
     number: "08",
-    animal: "Harpy Eagle",
-    title: "The Golden Nest",
-    skill: "Climb & glide",
-    icon: "🦅",
+    animal: "Lion",
+    title: "The Lion's Watch",
+    skill: "Watch, climb & wait",
+    icon: "🦁",
     status: "FINALE",
-    description: "Ride the canopy gusts and recover the Golden Pumpkin from the nest.",
+    description: "Cross the open savanna under the eyes of a lion. Jump for a branch and climb it to be safe; move only when the lion is looking away — the Golden Pumpkin waits at the far end.",
   },
 ];
 
-function byCourse<T>(course: CourseNumber, one: T, two: T, three: T, four: T, five: T, six: T, seven: T): T {
+function byCourse<T>(course: CourseNumber, one: T, two: T, three: T, four: T, five: T, six: T, seven: T, eight: T): T {
   return course === 1
     ? one
     : course === 2
@@ -311,7 +336,9 @@ function byCourse<T>(course: CourseNumber, one: T, two: T, three: T, four: T, fi
             ? five
             : course === 6
               ? six
-              : seven;
+              : course === 7
+                ? seven
+                : eight;
 }
 
 function makeGame(course: CourseNumber = 1, snakeSeed = 5): GameState {
@@ -333,8 +360,8 @@ function makeGame(course: CourseNumber = 1, snakeSeed = 5): GameState {
   return {
     course,
     player: {
-      x: course === 3 ? 105 : course === 4 ? HIPPO_PLAYER_START_X : course === 6 ? PIG_PLAYER_START_X : course === 7 ? RIVER_START_X : 125,
-      y: byCourse(course, GROUND_Y, MONKEY_GROUND_Y, EAGLE_GROUND_Y, HIPPO_BANK_Y, SNAKE_GRID_Y + SNAKE_CELL_H * 2.5, PIG_LEDGE_Y, RIVER_START_Y),
+      x: course === 3 ? 105 : course === 4 ? HIPPO_PLAYER_START_X : course === 6 ? PIG_PLAYER_START_X : course === 7 ? RIVER_START_X : course === 8 ? LION_PLAYER_START_X : 125,
+      y: byCourse(course, GROUND_Y, MONKEY_GROUND_Y, EAGLE_GROUND_Y, HIPPO_BANK_Y, SNAKE_GRID_Y + SNAKE_CELL_H * 2.5, PIG_LEDGE_Y, RIVER_START_Y, LION_GROUND_Y - 40),
       vx: 0,
       vy: 0,
       facing: 1,
@@ -355,6 +382,7 @@ function makeGame(course: CourseNumber = 1, snakeSeed = 5): GameState {
     snake: course === 5 ? makeSnakeCourse(snakeSeed) : makeSnakeCourse(1),
     pig: makePigCourse(Math.floor(Math.random() * 1e9)),
     river: makeRiverCourse(Math.floor(Math.random() * 1e9)),
+    lion: makeLionCourse(Math.floor(Math.random() * 1e9)),
     notice: "",
     noticeTimer: 0,
     running: false,
@@ -5135,6 +5163,875 @@ function drawRiverWorld(
   }
 }
 
+function drawAcacia(
+  ctx: CanvasRenderingContext2D,
+  tree: LionTree,
+  elapsed: number,
+  index: number,
+) {
+  const sway = Math.sin(elapsed * 0.9 + index * 1.7) * 2;
+  const trunkTop = LION_BRANCH_Y - 70;
+  ctx.save();
+  ctx.translate(tree.x, LION_GROUND_Y);
+
+  // Shade on the grass beneath the flat crown
+  ctx.fillStyle = "rgba(70,50,20,.2)";
+  ctx.beginPath();
+  ctx.ellipse(12, 4, tree.crown * 0.9, 9, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Trunk: slightly bowed, with bark ridges
+  ctx.strokeStyle = "#3b2a1a";
+  ctx.lineCap = "round";
+  ctx.lineWidth = 24;
+  ctx.beginPath();
+  ctx.moveTo(0, 6);
+  ctx.quadraticCurveTo(-6, (trunkTop - LION_GROUND_Y) * 0.55, 4 + sway * 0.4, trunkTop - LION_GROUND_Y);
+  ctx.stroke();
+  ctx.strokeStyle = "#6b4a2b";
+  ctx.lineWidth = 18;
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(255,220,160,.16)";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(-4, 0);
+  ctx.quadraticCurveTo(-10, (trunkTop - LION_GROUND_Y) * 0.55, 0, trunkTop - LION_GROUND_Y + 8);
+  ctx.stroke();
+  for (let ridge = 0; ridge < 5; ridge += 1) {
+    const ry = -18 - ridge * 22;
+    ctx.strokeStyle = "rgba(30,18,8,.35)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-8, ry);
+    ctx.quadraticCurveTo(-1, ry - 4, 7, ry + 1);
+    ctx.stroke();
+  }
+  // Root flare
+  ctx.fillStyle = "#4a3320";
+  ctx.beginPath();
+  ctx.moveTo(-22, 4);
+  ctx.quadraticCurveTo(-8, -14, 0, -10);
+  ctx.quadraticCurveTo(8, -14, 22, 4);
+  ctx.closePath();
+  ctx.fill();
+
+  // The low branch: a thick limb straight through the trunk, both sides
+  const by = LION_BRANCH_Y - LION_GROUND_Y;
+  ctx.strokeStyle = "#3b2a1a";
+  ctx.lineWidth = 15;
+  ctx.beginPath();
+  ctx.moveTo(-tree.span - 8, by + 5);
+  ctx.quadraticCurveTo(-tree.span * 0.4, by - 2, 0, by);
+  ctx.quadraticCurveTo(tree.span * 0.4, by - 2, tree.span + 8, by + 5);
+  ctx.stroke();
+  ctx.strokeStyle = "#7a5533";
+  ctx.lineWidth = 10;
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(255,225,170,.22)";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(-tree.span - 4, by - 1);
+  ctx.quadraticCurveTo(-tree.span * 0.4, by - 5, 0, by - 4);
+  ctx.quadraticCurveTo(tree.span * 0.4, by - 5, tree.span + 4, by - 1);
+  ctx.stroke();
+  // Leaf tufts at the tips and a couple of twigs
+  for (const side of [-1, 1] as const) {
+    const tipX = side * (tree.span + 4);
+    ctx.strokeStyle = "#5c4029";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(tipX - side * 18, by + 2);
+    ctx.lineTo(tipX - side * 6, by - 12);
+    ctx.stroke();
+    for (let leaf = 0; leaf < 4; leaf += 1) {
+      drawLeaf(ctx, tipX - side * (2 + leaf * 5), by - 10 + (leaf % 2) * 8, 12, side * (-0.5 + leaf * 0.5) + sway * 0.02, leaf % 2 ? "#7c9a3a" : "#9db54a");
+    }
+  }
+
+  // Flat-topped acacia crown: a wide slab of layered leaf clumps
+  const crownY = trunkTop - LION_GROUND_Y - 6;
+  const layers = [
+    { dx: 0, dy: 2, rx: tree.crown, ry: 20, color: "#4f7a2f" },
+    { dx: -tree.crown * 0.35, dy: -12, rx: tree.crown * 0.62, ry: 18, color: "#5e8a36" },
+    { dx: tree.crown * 0.3, dy: -14, rx: tree.crown * 0.6, ry: 17, color: "#63903a" },
+    { dx: -tree.crown * 0.1, dy: -24, rx: tree.crown * 0.5, ry: 15, color: "#79a544" },
+    { dx: tree.crown * 0.15, dy: -30, rx: tree.crown * 0.3, ry: 11, color: "#8db64f" },
+  ];
+  // Forked limbs reaching up into the crown
+  ctx.strokeStyle = "#5c4029";
+  ctx.lineWidth = 6;
+  for (const limb of [-1, 0, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(2, trunkTop - LION_GROUND_Y + 6);
+    ctx.quadraticCurveTo(limb * 18, crownY + 8, limb * tree.crown * 0.45 + sway, crownY - 6);
+    ctx.stroke();
+  }
+  layers.forEach((layer) => {
+    ctx.fillStyle = layer.color;
+    ctx.beginPath();
+    ctx.ellipse(layer.dx + sway, crownY + layer.dy, layer.rx, layer.ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  // Dappled highlights and the dark underside
+  ctx.fillStyle = "rgba(20,40,10,.22)";
+  ctx.beginPath();
+  ctx.ellipse(sway, crownY + 12, tree.crown * 0.92, 9, 0, 0, Math.PI);
+  ctx.fill();
+  for (let dot = 0; dot < 9; dot += 1) {
+    const dx = ((dot * 53 + index * 17) % (tree.crown * 2)) - tree.crown;
+    ctx.fillStyle = "rgba(230,255,170,.28)";
+    ctx.beginPath();
+    ctx.arc(dx * 0.8 + sway, crownY - 12 + ((dot * 31) % 20) - 8, 3 + (dot % 3), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawLion(
+  ctx: CanvasRenderingContext2D,
+  lion: Lion,
+  elapsed: number,
+  sees: boolean,
+  lookUp: boolean,
+  drawX = lion.x,
+  liftY = 0,
+) {
+  const chasing = lion.mood === "chase";
+  const pouncing = lion.mood === "pounce";
+  const moving = Math.abs(lion.vx) > 8 || chasing;
+  const stride = lion.stride;
+  const gait = moving ? Math.sin(stride) : 0;
+  const bob = pouncing
+    ? 0
+    : moving
+      ? Math.abs(Math.sin(stride)) * (chasing ? 4.5 : 1.6)
+      : Math.sin(elapsed * 1.8) * 0.7;
+  const reach = pouncing ? 26 : chasing ? 22 : 11;
+  const roaring = lion.roarFlash > 0;
+  const mane = "#9a4d1c";
+  const maneDark = "#6e3311";
+  const fur = "#d9a353";
+  const furDark = "#b9822f";
+  const furLight = "#ecc078";
+
+  ctx.save();
+  ctx.translate(drawX, LION_GROUND_Y);
+  // Ground shadow (stays on the grass even mid-leap)
+  ctx.fillStyle = "rgba(60,40,10,.26)";
+  ctx.beginPath();
+  ctx.ellipse(0, 3, chasing ? 52 : 42, 7, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.translate(0, -liftY);
+  ctx.scale(lion.facing, 1);
+  ctx.translate(0, -bob);
+  if (pouncing) ctx.rotate(-0.18 * (1 - lion.leapT));
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  // Tail: low and lazy on the prowl, straight out when charging, lashing while it waits
+  const lash = lion.mood === "wait" ? Math.sin(elapsed * 9) * 10 : 0;
+  ctx.strokeStyle = furDark;
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.moveTo(-34, -32);
+  if (chasing || pouncing) {
+    ctx.quadraticCurveTo(-58, -34, -74, -30);
+  } else {
+    ctx.quadraticCurveTo(-52, -26 + lash * 0.3, -56, -12 + lash);
+  }
+  ctx.stroke();
+  ctx.fillStyle = maneDark;
+  ctx.beginPath();
+  if (chasing || pouncing) ctx.ellipse(-76, -30, 7, 5, 0, 0, Math.PI * 2);
+  else ctx.ellipse(-57, -9 + lash, 6, 7, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Far legs
+  const leg = (x: number, swing: number, tone: string) => {
+    const kneeX = x + swing * 0.5;
+    const footX = x + swing;
+    ctx.strokeStyle = tone;
+    ctx.lineWidth = 9;
+    ctx.beginPath();
+    ctx.moveTo(x, -26);
+    ctx.lineTo(kneeX, -12);
+    ctx.lineTo(footX, -1);
+    ctx.stroke();
+    ctx.fillStyle = tone;
+    ctx.beginPath();
+    ctx.ellipse(footX + 2, 0, 6, 3.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+  };
+  leg(-22, reach * -gait, furDark);
+  leg(20, reach * gait, furDark);
+
+  // Body
+  const body = ctx.createLinearGradient(0, -52, 0, -8);
+  body.addColorStop(0, furLight);
+  body.addColorStop(0.55, fur);
+  body.addColorStop(1, furDark);
+  ctx.fillStyle = body;
+  ctx.beginPath();
+  ctx.ellipse(-2, chasing || pouncing ? -26 : -30, 36, chasing || pouncing ? 14 : 17, chasing || pouncing ? -0.05 : 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255,240,200,.35)";
+  ctx.beginPath();
+  ctx.ellipse(-4, -20, 22, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Near legs
+  leg(-14, reach * gait, fur);
+  leg(28, reach * -gait, fur);
+
+  // Head, looking up at the branch while it waits, pinned forward on the charge
+  ctx.save();
+  ctx.translate(30, -40);
+  ctx.rotate(lookUp ? -0.42 : chasing || pouncing ? 0.12 : lion.mood === "look" ? Math.sin(elapsed * 1.3) * 0.08 : 0);
+  // Mane: a ring of dark tufts behind the face
+  for (let tuft = 0; tuft < 12; tuft += 1) {
+    const angle = (tuft / 12) * Math.PI * 2 + Math.sin(elapsed * 2 + tuft) * 0.04;
+    ctx.fillStyle = tuft % 2 ? maneDark : mane;
+    ctx.beginPath();
+    ctx.ellipse(Math.cos(angle) * 15 - 4, Math.sin(angle) * 15 - 4, 10, 8, angle, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = mane;
+  ctx.beginPath();
+  ctx.arc(-4, -4, 19, 0, Math.PI * 2);
+  ctx.fill();
+  // Face
+  ctx.fillStyle = fur;
+  ctx.beginPath();
+  ctx.ellipse(6, -2, 15, 13.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = furLight;
+  ctx.beginPath();
+  ctx.ellipse(14, 4, 9, 7, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Ears
+  ctx.fillStyle = furDark;
+  ctx.beginPath();
+  ctx.arc(-4, -14, 5, 0, Math.PI * 2);
+  ctx.arc(8, -15, 4.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#c98a63";
+  ctx.beginPath();
+  ctx.arc(-4, -14, 2.4, 0, Math.PI * 2);
+  ctx.fill();
+  // Mouth / roar
+  if (roaring || pouncing || chasing) {
+    const open = pouncing ? 8 : roaring ? 5 + Math.sin(elapsed * 30) * 2 : 3;
+    ctx.fillStyle = "#4a1a14";
+    ctx.beginPath();
+    ctx.moveTo(10, 6);
+    ctx.lineTo(23, 5);
+    ctx.lineTo(18, 6 + open);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#fff7e0";
+    ctx.beginPath();
+    ctx.moveTo(12, 6);
+    ctx.lineTo(14, 6);
+    ctx.lineTo(13, 9.5);
+    ctx.closePath();
+    ctx.moveTo(20, 5.5);
+    ctx.lineTo(22, 5.5);
+    ctx.lineTo(21, 9);
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    ctx.strokeStyle = "#7a4a26";
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(15, 7);
+    ctx.quadraticCurveTo(18, 10, 22, 7);
+    ctx.stroke();
+  }
+  // Nose
+  ctx.fillStyle = "#4a2a20";
+  ctx.beginPath();
+  ctx.moveTo(18, 1);
+  ctx.lineTo(25, 1);
+  ctx.lineTo(21.5, 5);
+  ctx.closePath();
+  ctx.fill();
+  // Eye: narrow and lazy, wide and bright when it sees you
+  const wide = sees || chasing || pouncing;
+  ctx.fillStyle = "#fff6dc";
+  ctx.beginPath();
+  ctx.ellipse(8, -5, 4.2, wide ? 3.6 : 2.2, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = wide ? "#2a1408" : "#3e2414";
+  ctx.beginPath();
+  ctx.arc(9.4, -5, wide ? 2.2 : 1.6, 0, Math.PI * 2);
+  ctx.fill();
+  if (wide) {
+    ctx.fillStyle = "#ff5a3c";
+    ctx.beginPath();
+    ctx.arc(9.4, -5, 1, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.strokeStyle = maneDark;
+  ctx.lineWidth = 1.8;
+  ctx.beginPath();
+  ctx.moveTo(3, -10);
+  ctx.quadraticCurveTo(8, wide ? -13 : -10, 13, -9);
+  ctx.stroke();
+  // Whiskers
+  ctx.strokeStyle = "rgba(255,245,220,.6)";
+  ctx.lineWidth = 1;
+  for (const w of [-2, 0, 2]) {
+    ctx.beginPath();
+    ctx.moveTo(19, 3 + w);
+    ctx.lineTo(30, 1 + w * 2.2);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  ctx.restore();
+
+  // Alert mark and roar text sit in world space above the head
+  if (lion.alertFlash > 0 && (lion.mood === "alert" || lion.mood === "chase")) {
+    const pop = Math.min(1, lion.alertFlash / 0.25);
+    ctx.fillStyle = "#ff4a3a";
+    ctx.font = `900 ${22 + pop * 6}px Arial`;
+    ctx.textAlign = "center";
+    ctx.fillText("!", drawX + lion.facing * 30, LION_GROUND_Y - 84 - liftY);
+  }
+  if (roaring) {
+    const fade = Math.min(1, lion.roarFlash / 0.3);
+    ctx.fillStyle = `rgba(255,110,70,${fade})`;
+    ctx.font = "900 14px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("ROAR!", drawX + lion.facing * 26, LION_GROUND_Y - 78 - liftY + (1 - fade) * 8);
+  }
+}
+
+function drawLionGaze(ctx: CanvasRenderingContext2D, lion: Lion, danger: boolean, elapsed: number) {
+  if (lion.mood === "pounce") return;
+  // A cone of sight from the lion's eyes, laid along the trail
+  const eyeY = LION_GROUND_Y - 46;
+  const start = lion.x + lion.facing * 48;
+  const end = start + lion.facing * LION_SIGHT;
+  const pulse = 0.5 + Math.sin(elapsed * (danger ? 14 : 2.4)) * 0.5;
+  const strength = danger ? 0.3 + pulse * 0.12 : lion.mood === "wait" ? 0.12 : 0.17 + pulse * 0.04;
+  const color = danger ? "255,60,40" : "255,250,215";
+  const gaze = ctx.createLinearGradient(start, 0, end, 0);
+  gaze.addColorStop(0, `rgba(${color},${strength})`);
+  gaze.addColorStop(0.55, `rgba(${color},${strength * 0.5})`);
+  gaze.addColorStop(1, `rgba(${color},0)`);
+  ctx.fillStyle = gaze;
+  ctx.beginPath();
+  ctx.moveTo(start, eyeY - 6);
+  ctx.lineTo(end, eyeY - 62);
+  ctx.lineTo(end, LION_GROUND_Y + 12);
+  ctx.lineTo(start, eyeY + 10);
+  ctx.closePath();
+  ctx.fill();
+  // A faint centre line so the direction reads at a glance
+  ctx.strokeStyle = `rgba(${color},${danger ? 0.55 : 0.28})`;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([6, 8]);
+  ctx.beginPath();
+  ctx.moveTo(start, eyeY);
+  ctx.lineTo(end, eyeY - 8);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function drawGoldenPumpkin(ctx: CanvasRenderingContext2D, x: number, y: number, elapsed: number, glow: number) {
+  ctx.save();
+  ctx.translate(x, y);
+  const halo = ctx.createRadialGradient(0, -22, 8, 0, -22, 90 + glow * 60);
+  halo.addColorStop(0, `rgba(255,236,150,${0.55 + glow * 0.35})`);
+  halo.addColorStop(0.5, `rgba(255,200,80,${0.18 + glow * 0.2})`);
+  halo.addColorStop(1, "rgba(255,200,80,0)");
+  ctx.fillStyle = halo;
+  ctx.fillRect(-160, -180, 320, 220);
+  // Rays
+  for (let ray = 0; ray < 10; ray += 1) {
+    const angle = elapsed * 0.35 + (ray / 10) * Math.PI * 2;
+    ctx.strokeStyle = `rgba(255,240,170,${0.16 + glow * 0.3})`;
+    ctx.lineWidth = 3 + (ray % 2) * 2;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(angle) * 30, -22 + Math.sin(angle) * 30);
+    ctx.lineTo(Math.cos(angle) * (70 + glow * 50), -22 + Math.sin(angle) * (70 + glow * 50));
+    ctx.stroke();
+  }
+  const float = Math.sin(elapsed * 2.2) * 2.5 - glow * 16;
+  ctx.translate(0, float);
+  // Stem and leaf
+  ctx.strokeStyle = "#5b7a2a";
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.moveTo(0, -38);
+  ctx.quadraticCurveTo(4, -50, 10, -52);
+  ctx.stroke();
+  drawLeaf(ctx, 6, -46, 16, -0.9, "#7fae3e");
+  // Ribs
+  const gold = ctx.createLinearGradient(-26, -40, 26, 0);
+  gold.addColorStop(0, "#ffe27a");
+  gold.addColorStop(0.5, "#f0b024");
+  gold.addColorStop(1, "#c77d0c");
+  for (const rib of [
+    { dx: 0, rx: 27, ry: 22 },
+    { dx: -13, rx: 17, ry: 21 },
+    { dx: 13, rx: 17, ry: 21 },
+    { dx: 0, rx: 12, ry: 22 },
+  ]) {
+    ctx.fillStyle = gold;
+    ctx.beginPath();
+    ctx.ellipse(rib.dx, -20, rib.rx, rib.ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(140,80,10,.45)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+  ctx.fillStyle = "rgba(255,255,230,.55)";
+  ctx.beginPath();
+  ctx.ellipse(-9, -30, 6, 4, -0.5, 0, Math.PI * 2);
+  ctx.fill();
+  // Sparkles
+  for (let spark = 0; spark < 6; spark += 1) {
+    const phase = elapsed * 2.4 + spark * 1.1;
+    const size = (Math.sin(phase) + 1) * 2.4 + glow * 3;
+    const sx = Math.cos(spark * 1.9 + elapsed * 0.5) * (40 + glow * 30);
+    const sy = -24 + Math.sin(spark * 2.3 + elapsed * 0.7) * (30 + glow * 20);
+    ctx.fillStyle = "rgba(255,250,210,.9)";
+    ctx.beginPath();
+    ctx.moveTo(sx, sy - size);
+    ctx.lineTo(sx + size * 0.35, sy);
+    ctx.lineTo(sx, sy + size);
+    ctx.lineTo(sx - size * 0.35, sy);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawLionHud(ctx: CanvasRenderingContext2D, game: GameState, sees: boolean) {
+  const field = game.lion;
+  const lion = field.lion;
+  const sheltered = isSheltered(field);
+  const hanging = field.perch === "hang" || field.perch === "climbing" || field.perch === "lowering";
+  const onRocks = field.perch === "ground" && inSafeZone(game.player.x);
+
+  ctx.fillStyle = "rgba(48,30,12,.84)";
+  roundedRect(ctx, 18, 18, 330, 64, 12);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,240,200,.3)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.fillStyle = "rgba(255,242,207,.72)";
+  ctx.font = "900 10px Arial";
+  ctx.textAlign = "left";
+  ctx.fillText("THE LION", 34, 38);
+  const gazeLine =
+    field.won
+      ? "SLINKING AWAY"
+      : lion.mood === "pounce"
+      ? "GOT YOU"
+      : lion.mood === "chase"
+        ? "CHARGING!"
+        : lion.mood === "alert"
+          ? "SPOTTED YOU!"
+          : lion.mood === "wait"
+            ? "PACING BELOW YOU"
+            : sees
+              ? "WATCHING YOU"
+              : lion.mood === "leave"
+                ? "WANDERING OFF"
+                : lion.mood === "look"
+                  ? "STOPPED · LOOKING AROUND"
+                  : lionFacesPlayer(lion, game.player)
+                    ? "FACING YOUR WAY"
+                    : "LOOKING AWAY";
+  const danger = !field.won && (sees || lion.mood === "chase" || lion.mood === "alert" || lion.mood === "pounce");
+  const caution = !field.won && (lion.mood === "wait" || lion.mood === "look" || (!danger && lionFacesPlayer(lion, game.player)));
+  ctx.textAlign = "right";
+  ctx.fillStyle = danger ? "#ff6b52" : caution ? "#ffc35a" : "#b4ec6d";
+  ctx.fillText(gazeLine, 332, 38);
+  // Second line: the explorer's own footing, or the lion's patience bar
+  if (lion.mood === "wait") {
+    const left = patienceLeft(field);
+    const fill = Math.max(0, Math.min(1, left / (LION_PATIENCE + LION_PATIENCE_JITTER)));
+    ctx.fillStyle = "rgba(255,245,215,.18)";
+    roundedRect(ctx, 34, 50, 176, 11, 6);
+    ctx.fill();
+    ctx.fillStyle = "#ffc35a";
+    roundedRect(ctx, 34, 50, Math.max(3, 176 * fill), 11, 6);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,242,207,.8)";
+    ctx.font = "900 9px Arial";
+    ctx.textAlign = "left";
+    ctx.fillText(`LOSING INTEREST IN ${left.toFixed(1)}s`, 218, 59);
+  } else {
+    ctx.font = "900 9px Arial";
+    ctx.textAlign = "left";
+    ctx.fillStyle = field.won || sheltered ? "#b4ec6d" : hanging ? "#ff6b52" : onRocks ? "#b4ec6d" : "rgba(255,242,207,.7)";
+    ctx.fillText(
+      field.won
+        ? "YOU: THE GOLDEN PUMPKIN IS YOURS!"
+        : sheltered
+        ? "YOU: SAFE ON THE BRANCH — ↓ then SPACE to get down"
+        : hanging
+          ? "YOU: HANGING — NOT SAFE! Press ↑ to climb"
+          : onRocks
+            ? "YOU: SAFE ON THE ROCKS"
+            : "YOU: IN THE OPEN — SPACE under a branch, then ↑",
+      34,
+      60,
+    );
+  }
+  ctx.font = "900 8px Arial";
+  ctx.fillStyle = "rgba(255,242,207,.55)";
+  ctx.fillText("IT CHARGES WHATEVER IT SEES · ONLY A CLIMBED BRANCH IS SAFE", 34, 75);
+
+  ctx.fillStyle = "rgba(48,30,12,.84)";
+  roundedRect(ctx, WORLD_WIDTH - 18 - 250, 18, 250, 64, 12);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,240,200,.3)";
+  ctx.stroke();
+  ctx.fillStyle = "rgba(255,242,207,.72)";
+  ctx.font = "900 10px Arial";
+  ctx.textAlign = "left";
+  ctx.fillText("TO THE GOLDEN PUMPKIN", WORLD_WIDTH - 18 - 234, 38);
+  const progress = lionProgress(field);
+  ctx.fillStyle = "rgba(255,245,215,.18)";
+  roundedRect(ctx, WORLD_WIDTH - 18 - 234, 48, 216, 12, 6);
+  ctx.fill();
+  ctx.fillStyle = "#e4b34b";
+  roundedRect(ctx, WORLD_WIDTH - 18 - 234, 48, Math.max(3, 216 * progress), 12, 6);
+  ctx.fill();
+  // Tree markers along the bar
+  field.trees.forEach((tree) => {
+    const tx = WORLD_WIDTH - 18 - 234 + (216 * (tree.x - LION_PLAYER_START_X)) / (LION_FINISH_X - LION_PLAYER_START_X);
+    ctx.fillStyle = "rgba(48,30,12,.7)";
+    ctx.fillRect(tx - 1, 47, 2, 14);
+  });
+  ctx.font = "900 8px Arial";
+  ctx.fillStyle = "rgba(255,242,207,.6)";
+  ctx.fillText(`${field.climbs} CLIMB${field.climbs === 1 ? "" : "S"} · ${field.escapes} ESCAPE${field.escapes === 1 ? "" : "S"}`, WORLD_WIDTH - 18 - 234, 74);
+
+  if (game.noticeTimer > 0 && game.notice) {
+    const fade = Math.min(1, game.noticeTimer / 0.4);
+    ctx.fillStyle = `rgba(120,30,22,${0.8 * fade})`;
+    roundedRect(ctx, 400, 92, 400, 36, 10);
+    ctx.fill();
+    ctx.strokeStyle = `rgba(255,176,138,${fade})`;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = `rgba(255,242,207,${fade})`;
+    ctx.font = "900 12px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText(game.notice, 600, 115);
+  }
+}
+
+function drawLionWorld(
+  ctx: CanvasRenderingContext2D,
+  game: GameState,
+  activeCharacter: Character,
+) {
+  const { elapsed, player } = game;
+  const field = game.lion;
+  const lion = field.lion;
+  const sees = lionSeesPlayer(field, player);
+  ctx.clearRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+
+  // A late-afternoon savanna sky, warming toward the horizon
+  const sky = ctx.createLinearGradient(0, 0, 0, WORLD_HEIGHT);
+  sky.addColorStop(0, "#7fb3d8");
+  sky.addColorStop(0.35, "#c9d9c8");
+  sky.addColorStop(0.62, "#f3d59a");
+  sky.addColorStop(0.8, "#e9b56a");
+  sky.addColorStop(1, "#b9853d");
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+
+  const sunX = 960;
+  const sunY = 250;
+  const sun = ctx.createRadialGradient(sunX, sunY, 20, sunX, sunY, 260);
+  sun.addColorStop(0, "rgba(255,240,190,.95)");
+  sun.addColorStop(0.25, "rgba(255,210,130,.45)");
+  sun.addColorStop(1, "rgba(255,200,120,0)");
+  ctx.fillStyle = sun;
+  ctx.fillRect(sunX - 280, sunY - 280, 560, 560);
+  ctx.fillStyle = "#fff1c8";
+  ctx.beginPath();
+  ctx.arc(sunX, sunY, 44, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Thin high clouds and vultures turning slow circles
+  for (let cloud = 0; cloud < 3; cloud += 1) {
+    const cx = ((cloud * 431 + elapsed * 6) % (WORLD_WIDTH + 300)) - 150;
+    const cy = 70 + cloud * 26;
+    ctx.fillStyle = "rgba(255,255,255,.5)";
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, 70, 6, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx + 30, cy - 4, 40, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  for (let bird = 0; bird < 3; bird += 1) {
+    const angle = elapsed * 0.32 + bird * 2.1;
+    const bx = 560 + Math.cos(angle) * (90 + bird * 30);
+    const by = 120 + Math.sin(angle) * 22 + bird * 14;
+    const flap = Math.sin(elapsed * 2.4 + bird) * 3;
+    ctx.strokeStyle = "rgba(60,40,30,.75)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(bx - 12, by + flap);
+    ctx.quadraticCurveTo(bx - 4, by - 4, bx, by);
+    ctx.quadraticCurveTo(bx + 4, by - 4, bx + 12, by + flap);
+    ctx.stroke();
+  }
+
+  // Distant hills and a far ridge line
+  const drawHills = (baseY: number, color: string, offset: number, height: number) => {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(-30, WORLD_HEIGHT);
+    ctx.lineTo(-30, baseY);
+    for (let x = -30; x <= WORLD_WIDTH + 90; x += 140) {
+      const crest = baseY - 20 - Math.abs(Math.sin((x + offset) * 0.005)) * height;
+      ctx.quadraticCurveTo(x + 70, crest, x + 140, baseY - 8);
+    }
+    ctx.lineTo(WORLD_WIDTH + 90, WORLD_HEIGHT);
+    ctx.closePath();
+    ctx.fill();
+  };
+  drawHills(392, "#b39a8a", 80, 90);
+  drawHills(420, "#a48e6c", 300, 60);
+  // Silhouette acacias on the far plain
+  for (let far = 0; far < 9; far += 1) {
+    const fx = ((far * 149 + 60) % (WORLD_WIDTH + 60)) - 30;
+    const fy = 432 - (far % 3) * 6;
+    ctx.fillStyle = "rgba(110,90,60,.55)";
+    ctx.fillRect(fx - 1.5, fy - 18, 3, 18);
+    ctx.beginPath();
+    ctx.ellipse(fx, fy - 20, 16 + (far % 3) * 4, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // The plain: dry golden grass to the horizon, warmer and taller near the trail
+  const plain = ctx.createLinearGradient(0, 428, 0, LION_GROUND_Y);
+  plain.addColorStop(0, "#d8c37a");
+  plain.addColorStop(0.5, "#cdb15f");
+  plain.addColorStop(1, "#b99a48");
+  ctx.fillStyle = plain;
+  ctx.fillRect(0, 428, WORLD_WIDTH, LION_GROUND_Y - 428);
+  for (let x = 0; x < WORLD_WIDTH; x += 9) {
+    const depth = (x * 7) % 5;
+    const gy = 446 + ((x * 13) % 90);
+    const h = 8 + depth * 3;
+    ctx.strokeStyle = depth % 2 ? "rgba(160,130,60,.45)" : "rgba(200,170,90,.5)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(x, gy);
+    ctx.lineTo(x + Math.sin(elapsed * 1.1 + x * 0.3) * 2, gy - h);
+    ctx.stroke();
+  }
+
+  // Trees stand in front of the plain, behind the lion
+  field.trees.forEach((tree, index) => drawAcacia(ctx, tree, elapsed, index));
+
+  // Ground line: a strip of tall grass at the trail, packed earth below
+  const grass = ctx.createLinearGradient(0, LION_GROUND_Y - 16, 0, LION_GROUND_Y + 8);
+  grass.addColorStop(0, "#c8a94f");
+  grass.addColorStop(1, "#8f7a34");
+  ctx.fillStyle = grass;
+  ctx.fillRect(0, LION_GROUND_Y - 6, WORLD_WIDTH, 16);
+  const earth = ctx.createLinearGradient(0, LION_GROUND_Y + 8, 0, WORLD_HEIGHT);
+  earth.addColorStop(0, "#a5763d");
+  earth.addColorStop(1, "#6b4a26");
+  ctx.fillStyle = earth;
+  ctx.fillRect(0, LION_GROUND_Y + 8, WORLD_WIDTH, WORLD_HEIGHT - LION_GROUND_Y - 8);
+  for (let x = 4; x < WORLD_WIDTH; x += 11) {
+    const h = 10 + ((x * 7) % 12);
+    const sway = Math.sin(elapsed * 1.4 + x * 0.2) * 2.2;
+    ctx.strokeStyle = x % 3 ? "#d3b458" : "#b8963c";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x, LION_GROUND_Y + 2);
+    ctx.quadraticCurveTo(x + sway * 0.4, LION_GROUND_Y - h * 0.6, x + sway, LION_GROUND_Y - h);
+    ctx.stroke();
+  }
+  for (let p = 0; p < 30; p += 1) {
+    const px = ((p * 191 + 40) % (WORLD_WIDTH - 40)) + 20;
+    const py = LION_GROUND_Y + 18 + ((p * 47) % 40);
+    ctx.fillStyle = p % 3 ? "rgba(90,60,30,.4)" : "rgba(140,100,50,.4)";
+    ctx.beginPath();
+    ctx.ellipse(px, py, 5 + (p % 4) * 2, 2.6, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // The lion's line of sight, laid along the trail before it
+  if (!field.won) drawLionGaze(ctx, lion, sees || lion.mood === "alert" || lion.mood === "chase", elapsed);
+
+  // Trail-head rocks on the left: the safe start
+  const drawRock = (x: number, y: number, w: number, h: number, tone: string) => {
+    ctx.fillStyle = tone;
+    ctx.beginPath();
+    ctx.moveTo(x - w / 2, y);
+    ctx.quadraticCurveTo(x - w / 2, y - h, x - w * 0.15, y - h);
+    ctx.quadraticCurveTo(x + w * 0.3, y - h * 1.08, x + w / 2, y - h * 0.5);
+    ctx.quadraticCurveTo(x + w / 2 + 4, y, x, y + 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,240,200,.18)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x - w * 0.3, y - h * 0.9);
+    ctx.lineTo(x + w * 0.1, y - h * 0.95);
+    ctx.stroke();
+  };
+  drawRock(40, LION_GROUND_Y + 6, 120, 60, "#8b7b66");
+  drawRock(110, LION_GROUND_Y + 6, 110, 44, "#9c8a72");
+  drawRock(150, LION_GROUND_Y + 4, 60, 26, "#7f7060");
+  drawRock(20, LION_GROUND_Y - 40, 70, 40, "#a3917a");
+  ctx.fillStyle = "rgba(60,45,30,.35)";
+  ctx.fillRect(0, LION_GROUND_Y + 4, LION_SAFE_LEFT + 10, 6);
+
+  // The pumpkin shrine on the right: stone steps and the prize
+  const shrineX = 1132;
+  ctx.fillStyle = "#8a7660";
+  roundedRect(ctx, LION_SAFE_RIGHT + 10, LION_GROUND_Y - 14, 130, 30, 6);
+  ctx.fill();
+  ctx.fillStyle = "#a08b70";
+  roundedRect(ctx, LION_SAFE_RIGHT + 30, LION_GROUND_Y - 30, 100, 24, 6);
+  ctx.fill();
+  ctx.fillStyle = "#b39d80";
+  roundedRect(ctx, shrineX - 30, LION_GROUND_Y - 44, 60, 22, 5);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255,235,190,.25)";
+  ctx.fillRect(LION_SAFE_RIGHT + 30, LION_GROUND_Y - 30, 100, 3);
+  ctx.fillRect(shrineX - 30, LION_GROUND_Y - 44, 60, 3);
+  for (let v = 0; v < 5; v += 1) {
+    drawLeaf(ctx, LION_SAFE_RIGHT + 16 + v * 26, LION_GROUND_Y - 12, 12, -0.9 + (v % 2) * 0.5, v % 2 ? "#6f9a44" : "#8fae4c");
+  }
+  drawGoldenPumpkin(ctx, shrineX, LION_GROUND_Y - 44, elapsed, field.celebrate);
+
+  // Companion cheering from the rocks
+  const companion: Character = activeCharacter === "guto" ? "nanda" : "guto";
+  const inTheOpen = !inSafeZone(player.x) && !field.won;
+  if (!field.won) {
+    drawCharacter(ctx, 46, LION_GROUND_Y - 40, companion, 1, elapsed, inTheOpen ? "wave" : "idle", 0, 0.88);
+    if (inTheOpen && !field.lost) {
+      const bubbleY = LION_GROUND_Y - 190 + Math.sin(elapsed * 2.8) * 2;
+      const line = sees || lion.mood === "chase" ? "RUN!" : lion.mood === "wait" ? "HOLD ON!" : isSheltered(field) ? "WAIT…" : "CLIMB!";
+      ctx.fillStyle = "rgba(247,232,186,.92)";
+      roundedRect(ctx, 6, bubbleY, 110, 30, 12);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(40, bubbleY + 28);
+      ctx.lineTo(48, bubbleY + 39);
+      ctx.lineTo(56, bubbleY + 28);
+      ctx.fill();
+      ctx.fillStyle = "#7a3320";
+      ctx.font = "800 11px Arial";
+      ctx.textAlign = "center";
+      ctx.fillText(line, 61, bubbleY + 19);
+    }
+  }
+
+  // The lion, mid-pounce on a lost course
+  const lookUp = lion.mood === "wait";
+  if (field.lost) {
+    const t = lion.leapT;
+    const arc = Math.sin(Math.min(1, t) * Math.PI) * (field.lossReason === "hanging" ? 70 : 34);
+    const lx = lion.x + (player.x - lion.x) * Math.min(1, t * 1.2);
+    drawLion(ctx, lion, elapsed, true, false, lx, arc);
+  } else {
+    drawLion(ctx, lion, elapsed, sees, lookUp);
+  }
+
+  // The explorer
+  if (field.lost) {
+    const down = Math.min(1, lion.leapT * 1.4);
+    ctx.save();
+    ctx.translate(player.x, LION_GROUND_Y);
+    ctx.rotate(-player.facing * 1.35 * down);
+    drawCharacter(ctx, 0, 0, activeCharacter, player.facing, elapsed, "fall", 0, 1);
+    ctx.restore();
+    ctx.fillStyle = "#ff5a45";
+    ctx.font = "900 22px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("CAUGHT!", Math.max(90, Math.min(player.x, WORLD_WIDTH - 90)), LION_GROUND_Y - 140);
+  } else if (field.won) {
+    // Both explorers at the shrine, and the pumpkin lifting into the light
+    const c = field.celebrate;
+    const hop = Math.abs(Math.sin(elapsed * 6)) * 10 * c;
+    drawCharacter(ctx, shrineX - 56, LION_GROUND_Y - 14 - hop, activeCharacter, 1, elapsed, "wave", 0, 1);
+    const arrived = c > 0.7;
+    const runIn = Math.min(1, c / 0.7);
+    const companionX = 720 + (shrineX - 104 - 720) * runIn;
+    drawCharacter(ctx, companionX, LION_GROUND_Y - hop * 0.8, companion, 1, elapsed, arrived ? "wave" : "run", 220, 1);
+    // Confetti
+    for (let bit = 0; bit < 60; bit += 1) {
+      const life = (elapsed * 0.35 + bit * 0.137) % 1;
+      const bx = ((bit * 197) % WORLD_WIDTH) + Math.sin(elapsed * 2 + bit) * 18;
+      const by = life * WORLD_HEIGHT;
+      ctx.fillStyle = ["#ffd34d", "#ff7a59", "#7ad0ff", "#b4ec6d", "#ffffff"][bit % 5];
+      ctx.globalAlpha = c * (1 - life * 0.5);
+      ctx.fillRect(bx, by, 6, 10);
+    }
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = "rgba(255,244,200,.95)";
+    ctx.font = "900 30px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("THE GOLDEN PUMPKIN!", 600, 200 - c * 10);
+    ctx.font = "900 13px Arial";
+    ctx.fillStyle = "rgba(255,244,200,.8)";
+    ctx.fillText("EIGHT GUARDIANS PASSED · THE EXPEDITION IS COMPLETE", 600, 226 - c * 10);
+  } else {
+    let motion: CharacterMotion = "idle";
+    let drawY = player.y;
+    if (field.perch === "hang" || field.perch === "lowering") motion = "hang";
+    else if (field.perch === "climbing") motion = "climb";
+    else if (field.perch === "perched") motion = Math.abs(player.vx) > 24 ? "run" : "idle";
+    else if (!player.onGround) motion = player.vy < 0 ? "jump" : "fall";
+    else if (Math.abs(player.vx) > 24) motion = "run";
+    if (field.perch === "climbing") drawY = player.y;
+    drawCharacter(ctx, player.x, drawY, activeCharacter, player.facing, elapsed, motion, player.vx, 1, 1);
+    // Hands wrap the branch while hanging
+    if (field.perch === "hang" || field.perch === "lowering" || field.perch === "climbing") {
+      ctx.fillStyle = "#d48a55";
+      ctx.beginPath();
+      ctx.arc(player.x - 4, LION_BRANCH_Y - 3, 4.6, 0, Math.PI * 2);
+      ctx.arc(player.x + 5, LION_BRANCH_Y - 3, 4.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const labelX = Math.max(120, Math.min(player.x, WORLD_WIDTH - 120));
+    const badge = (text: string, y: number, color: string, alpha: number) => {
+      ctx.font = "900 12px Arial";
+      ctx.textAlign = "center";
+      const width = ctx.measureText(text).width + 18;
+      ctx.fillStyle = `rgba(40,26,12,${0.72 * alpha})`;
+      roundedRect(ctx, labelX - width / 2, y - 13, width, 19, 9);
+      ctx.fill();
+      ctx.fillStyle = color.replace("ALPHA", alpha.toFixed(2));
+      ctx.fillText(text, labelX, y + 1);
+    };
+    if (isSheltered(field)) {
+      const pulse = (Math.sin(elapsed * 4) + 1) / 2;
+      badge("SAFE", LION_BRANCH_Y - 108, "rgba(180,236,109,ALPHA)", 0.75 + pulse * 0.25);
+    } else if (field.perch === "hang" || field.perch === "climbing" || field.perch === "lowering") {
+      const pulse = (Math.sin(elapsed * 12) + 1) / 2;
+      badge(field.perch === "lowering" ? "GETTING DOWN…" : "↑ CLIMB!", LION_GROUND_Y - 24, "rgba(255,150,120,ALPHA)", 0.7 + pulse * 0.3);
+    } else if (sees && !inSafeZone(player.x)) {
+      const pulse = (Math.sin(elapsed * 12) + 1) / 2;
+      badge("IT SEES YOU!", player.y - 104, "rgba(255,130,100,ALPHA)", 0.7 + pulse * 0.3);
+    }
+  }
+
+  drawLionHud(ctx, game, sees);
+
+  if (!game.running && !game.won && !game.lost) {
+    ctx.fillStyle = "rgba(5,29,27,.18)";
+    ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+  }
+}
+
 export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<GameState>(makeGame(1));
@@ -5153,6 +6050,7 @@ export default function Home() {
   const [snakeLoss, setSnakeLoss] = useState<SnakeLossReason | null>(null);
   const [pigLoss, setPigLoss] = useState<PigLossReason | null>(null);
   const [riverLoss, setRiverLoss] = useState<RiverLossReason | null>(null);
+  const [lionLoss, setLionLoss] = useState<LionLossReason | null>(null);
   const snakeSeedRef = useRef(0);
 
   useEffect(() => {
@@ -5213,6 +6111,7 @@ export default function Home() {
     setSnakeLoss(null);
     setPigLoss(null);
     setRiverLoss(null);
+    setLionLoss(null);
     setCourseStatus(
       byCourse(
         activeCourse,
@@ -5223,6 +6122,7 @@ export default function Home() {
         "Hop forward with → — roots are safe, snakes are not",
         "Run across on the stilts — hold Z + SPACE to vault boulders",
         "Press SPACE to hop onto a log, then ←→ to spin it across",
+        "Watch the lion — run when it looks away, SPACE under a branch, then ↑ to climb",
       ),
     );
   }, [activeCourse]);
@@ -5264,6 +6164,7 @@ export default function Home() {
     setSnakeLoss(null);
     setPigLoss(null);
     setRiverLoss(null);
+    setLionLoss(null);
     setCourseStatus(
       byCourse(
         course,
@@ -5274,6 +6175,7 @@ export default function Home() {
         "Hop forward with → — roots are safe, snakes are not",
         "Run across on the stilts — hold Z + SPACE to vault boulders",
         "Press SPACE to hop onto a log, then ←→ to spin it across",
+        "Watch the lion — run when it looks away, SPACE under a branch, then ↑ to climb",
       ),
     );
     window.setTimeout(() => {
@@ -6115,7 +7017,7 @@ export default function Home() {
                           : "Keep moving — the pigs bite planted stilts",
             );
           }
-        } else {
+        } else if (game.course === 7) {
           const river = game.river;
           const events = stepRiverCourse(river, player, { moveX: move, moveY: (down ? 1 : 0) - (up ? 1 : 0) }, dt);
           events.forEach((event: RiverEvent) => {
@@ -6185,6 +7087,128 @@ export default function Home() {
                     : "Steer with the arrows and come down on a log",
             );
           }
+        } else {
+          const savanna = game.lion;
+          const events = stepLionCourse(savanna, player, { move, run: running, up, down }, dt);
+          game.noticeTimer = Math.max(0, game.noticeTimer - dt);
+          const notify = (text: string, seconds = 1.6) => {
+            game.notice = text;
+            game.noticeTimer = seconds;
+          };
+          events.forEach((event: LionEvent) => {
+            switch (event.type) {
+              case "jump":
+                playTone(340, 0.06, "square");
+                break;
+              case "catch":
+                setCourseStatus("Caught the branch — now press ↑ to climb, you're not safe yet!");
+                playTone(420, 0.06, "square");
+                window.setTimeout(() => playTone(520, 0.07, "square"), 60);
+                break;
+              case "climb":
+                setCourseStatus("Safe on the branch — the lion can't reach you up here. Wait for your moment");
+                playTone(520, 0.07, "triangle");
+                window.setTimeout(() => playTone(700, 0.09, "triangle"), 80);
+                break;
+              case "hang":
+                setCourseStatus("Hanging — press SPACE to drop to the grass (the lion can reach you here!)");
+                playTone(300, 0.05, "square");
+                break;
+              case "drop":
+                setCourseStatus("Down on the grass — RUN for the next tree!");
+                playTone(240, 0.06, "square");
+                break;
+              case "land":
+                if (event.safe && player.x >= LION_SAFE_RIGHT) break;
+                if (!event.safe) setCourseStatus("In the open — get under a branch and jump");
+                break;
+              case "alert":
+                notify("THE LION SAW YOU!", 1.2);
+                setCourseStatus("Spotted! Get to a branch and CLIMB — SPACE, then ↑");
+                playTone(160, 0.14, "sawtooth");
+                break;
+              case "chase":
+                playTone(110, 0.3, "sawtooth");
+                window.setTimeout(() => playTone(90, 0.3, "sawtooth"), 120);
+                break;
+              case "wait":
+                if (event.tree !== null) {
+                  setCourseStatus("The lion is pacing under your tree — stay up there until it loses interest");
+                } else {
+                  setCourseStatus("Back on the rocks — the lion won't come up here. Wait for it to wander off");
+                }
+                break;
+              case "roar":
+                playTone(95, 0.22, "sawtooth");
+                break;
+              case "leave":
+                notify("THE LION LOST INTEREST", 1.5);
+                setCourseStatus("It's wandering off — go when it's looking away and not between you and the next tree");
+                playTone(330, 0.08, "triangle");
+                window.setTimeout(() => playTone(440, 0.1, "triangle"), 90);
+                break;
+              case "escape":
+                break;
+              case "won":
+                // Let the celebration play on the canvas before the card appears
+                game.won = true;
+                setCourseStatus("THE GOLDEN PUMPKIN IS YOURS!");
+                playTone(659, 0.16, "triangle");
+                window.setTimeout(() => playTone(784, 0.16, "triangle"), 140);
+                window.setTimeout(() => playTone(1046, 0.3, "triangle"), 280);
+                window.setTimeout(() => playTone(1318, 0.5, "triangle"), 460);
+                window.setTimeout(() => {
+                  if (gameRef.current !== game) return;
+                  game.running = false;
+                  setOverlay("won");
+                }, 3600);
+                break;
+              case "lost":
+                game.lost = true;
+                setLionLoss(event.reason);
+                window.setTimeout(() => {
+                  if (gameRef.current !== game) return;
+                  game.running = false;
+                  setOverlay("gameover");
+                }, 1300);
+                setCourseStatus(
+                  event.reason === "hanging"
+                    ? "Pulled off the branch — hanging isn't safe, you have to climb!"
+                    : "The lion caught you in the open… ouch!",
+                );
+                playTone(80, 0.5, "sawtooth");
+                break;
+            }
+          });
+
+          statusTimer += dt;
+          if (statusTimer > 0.5 && events.length === 0 && !game.won && !game.lost) {
+            statusTimer = 0;
+            const lion = savanna.lion;
+            const sees = lionSeesPlayer(savanna, player);
+            const facing = lionFacesPlayer(lion, player);
+            setCourseStatus(
+              isSheltered(savanna)
+                ? lion.mood === "wait"
+                  ? `Stay put — the lion loses interest in ${patienceLeft(savanna).toFixed(1)}s`
+                  : facing
+                    ? "Safe up here — the lion is facing your way, wait for it to turn"
+                    : lion.mood === "look"
+                      ? "It's stopped to look around — it may turn any moment"
+                      : "It's looking away — ↓ then SPACE to drop, then RUN to the next tree"
+                : savanna.perch !== "ground"
+                  ? "Hanging isn't safe — press ↑ to climb onto the branch"
+                  : player.x <= LION_SAFE_LEFT
+                    ? facing
+                      ? "On the rocks — wait until the lion looks away, then run for the first tree"
+                      : "The lion's looking away — run! SPACE under the first branch, then ↑"
+                    : sees
+                      ? "IT SEES YOU — get under a branch, SPACE, then ↑!"
+                      : player.x > LION_SAFE_RIGHT
+                        ? "The shrine! Walk up to the Golden Pumpkin"
+                        : "In the open — keep running, SPACE under a branch and ↑ to climb",
+            );
+          }
         }
       } else {
         game.elapsed += dt * 0.35;
@@ -6196,7 +7220,8 @@ export default function Home() {
       else if (game.course === 4) drawHippoWorld(context, game, activeCharacter);
       else if (game.course === 5) drawSnakeWorld(context, game, activeCharacter);
       else if (game.course === 6) drawPigWorld(context, game, activeCharacter);
-      else drawRiverWorld(context, game, activeCharacter);
+      else if (game.course === 7) drawRiverWorld(context, game, activeCharacter);
+      else drawLionWorld(context, game, activeCharacter);
       animationFrame = window.requestAnimationFrame(update);
     };
 
@@ -6242,6 +7267,8 @@ export default function Home() {
           game.pig.jumpWithHold = keysRef.current.has("KeyZ");
         } else if (game.course === 7) {
           game.river.jumpPresses += 1;
+        } else if (game.course === 8) {
+          game.lion.jumpPresses += 1;
         } else if (game.course === 2 && player.onGround) {
           player.vy = -515;
           player.onGround = false;
@@ -6320,6 +7347,8 @@ export default function Home() {
       game.pig.jumpWithHold = true;
     } else if (game.course === 7) {
       game.river.jumpPresses += 1;
+    } else if (game.course === 8) {
+      game.lion.jumpPresses += 1;
     } else if (game.course === 2 && player.onGround) {
       player.vy = -515;
       player.onGround = false;
@@ -6379,7 +7408,7 @@ export default function Home() {
               <span>ENTER THE JUNGLE</span>
               <span aria-hidden="true">→</span>
             </button>
-            <small>COURSES 01–07 READY · SEVEN JUNGLE CHALLENGES</small>
+            <small>COURSES 01–08 READY · THE FULL EXPEDITION</small>
           </div>
         </section>
       )}
@@ -6469,6 +7498,11 @@ export default function Home() {
               onClick={() => selectCourse(7)}
               type="button"
             >07 · PIRANHAS</button>
+            <button
+              className={activeCourse === 8 ? "selected" : ""}
+              onClick={() => selectCourse(8)}
+              type="button"
+            >08 · LION</button>
           </div>
           <p className="eyebrow">
             {byCourse(
@@ -6480,6 +7514,7 @@ export default function Home() {
               "COURSE 05 · SLEEPING SNAKES",
               "COURSE 06 · WILD PIG VALLEY",
               "COURSE 07 · PIRANHA RIVER",
+              "COURSE 08 · THE LION'S SAVANNA",
             )}
           </p>
           <h1>
@@ -6492,6 +7527,7 @@ export default function Home() {
               "The Sleeping Snakes",
               "The Wild Pig Valley",
               "The Piranha River",
+              "The Lion's Watch",
             )}
           </h1>
         </div>
@@ -6505,6 +7541,7 @@ export default function Home() {
             "Seen from above, the forest floor is a tangle of roots and sleeping vipers that look exactly alike. Hop one row at a time, wake them on purpose, and remember what you saw.",
             "The trail ends at a cliff. Down in the valley, wild pigs root among the boulders. Strap on the pea-leg stilts — taller than the valley wall, for now — and cross before the boars chew them too short to climb out.",
             "The trail is cut by a wide river sliding toward a waterfall. Logs float down it — hop aboard, spin them the right way to steer across, and don't fall in with the piranhas.",
+            "The last stretch is open savanna, and a lion guards the Golden Pumpkin at the far end. Three acacia trees are the only cover: jump for a branch and climb it before the lion gets there, and only move when it isn't watching.",
           )}
         </p>
       </section>
@@ -6520,6 +7557,7 @@ export default function Home() {
           "The Sleeping Snakes game",
           "The Wild Pig Valley game",
           "The Piranha River game",
+          "The Lion's Watch game",
         )}
       >
         <div className="game-hud">
@@ -6553,6 +7591,7 @@ export default function Home() {
               "A top-down maze course. Hop across twenty rows of roots and sleeping snakes that look identical, waking snakes briefly to memorize a safe path.",
               "A side-scrolling valley course. Drop from the high ground and cross the valley floor on wooden stilts, vaulting boulders with Z and Space while wild pigs bite the stilts shorter; climb out only while the stilts are still taller than the valley wall.",
               "A top-down river course. Hop onto floating logs and spin them with the arrow keys to steer left-to-right across a current flowing toward a waterfall, while piranhas wait below; reach the far bank without falling in or going over the falls.",
+              "A side-scrolling savanna course. Cross open ground guarded by a lion that charges anything it sees on the ground or hanging from a branch. Jump under an acacia branch to catch it and press up to climb to safety; press down and then jump to get back down, and move only while the lion is looking away. Reach the shrine to claim the Golden Pumpkin.",
             )}
           />
 
@@ -6571,6 +7610,7 @@ export default function Home() {
                       "● SNAKES SLEEPING",
                       "● WILD PIGS ROAMING",
                       "● PIRANHAS CIRCLING",
+                      "● LION ON THE PROWL",
                     )}
                   </span>
                 </div>
@@ -6590,8 +7630,10 @@ export default function Home() {
                         <>Cross twenty rows.<br />Remember the snakes.</>
                       ) : activeCourse === 6 ? (
                         <>Cross the valley.<br />Climb out before the stilts are too short.</>
-                      ) : (
+                      ) : activeCourse === 7 ? (
                         <>Spin the logs across.<br />Stay out of the piranhas.</>
+                      ) : (
+                        <>Cross the savanna.<br />Claim the Golden Pumpkin.</>
                       )}
                     </h2>
                     <p>
@@ -6623,13 +7665,20 @@ export default function Home() {
                         out on the far side. Every pig bite <strong>chews them shorter</strong>, and once they
                         are shorter than the wall you are stuck down there. Hold <strong>X</strong> to run,
                         press <strong>Z + SPACE</strong> to vault the boulders, and never stand still.</>
-                      ) : (
+                      ) : activeCourse === 7 ? (
                         <>Walk the near bank with the arrows, then <strong>aim SPACE</strong> to hop onto a
                         floating log and steer the leap with the arrows. On a log the arrows{" "}
                         <strong>spin</strong> it: most logs carry you toward the far bank. But the current
                         always wins — spin only <strong>slows the fall</strong>, it never climbs — so before
                         your log sinks too low you must <strong>hop UP</strong> to a fresher, higher one.
                         Miss a log and the piranhas get you; drift over the lip and it's the falls.</>
+                      ) : (
+                        <>The lion charges anything it <strong>sees</strong> on the ground — or hanging from a
+                        branch. It only sees what it is <strong>facing</strong>, so move when it looks away.
+                        Under a tree, <strong>SPACE</strong> jumps for the branch and <strong>↑</strong> climbs
+                        onto it: up there you are safe, and a lion pacing below will lose interest and wander
+                        off. To get down it’s the same moves backwards: <strong>↓</strong> to hang, then{" "}
+                        <strong>SPACE</strong> to drop. Never run toward the lion.</>
                       )}
                     </p>
 
@@ -6664,17 +7713,17 @@ export default function Home() {
                   <div className="control-panel">
                     <p className="eyebrow">CONTROLS</p>
                     <div className="control-row">
-                      <span className="key-pair"><kbd>←→</kbd>{(activeCourse === 1 || activeCourse === 5 || activeCourse === 7) && <kbd>↑↓</kbd>}</span>
+                      <span className="key-pair"><kbd>←→</kbd>{(activeCourse === 1 || activeCourse === 5 || activeCourse === 7 || activeCourse === 8) && <kbd>↑↓</kbd>}</span>
                       <span>
-                        <b>{byCourse(activeCourse, "Move / climb", "Move / steer", "Move", "Walk", "Hop a row", "Move / run", "Spin / walk / steer")}</b>
-                        <small>{byCourse(activeCourse, "Steer in air, climb on a vine", "Control every jump in the air", "Walk the clearing, chase rodents", "Position yourself on a back or the bank edge", "Forward or back, onto whatever is there", "Walk off the ledge, cross the floor, steer in the air", "On a log: → forward / ← back spin. On the bank or mid-jump: move & aim")}</small>
+                        <b>{byCourse(activeCourse, "Move / climb", "Move / steer", "Move", "Walk", "Hop a row", "Move / run", "Spin / walk / steer", "Run / climb / get down")}</b>
+                        <small>{byCourse(activeCourse, "Steer in air, climb on a vine", "Control every jump in the air", "Walk the clearing, chase rodents", "Position yourself on a back or the bank edge", "Forward or back, onto whatever is there", "Walk off the ledge, cross the floor, steer in the air", "On a log: → forward / ← back spin. On the bank or mid-jump: move & aim", "←→ run the savanna or walk the branch · ↑ climbs from a hang · ↓ hangs from the branch")}</small>
                       </span>
                     </div>
                     <div className="control-row">
                       <span className="wide-key"><kbd>SPACE</kbd></span>
                       <span>
-                        <b>{byCourse(activeCourse, "Jump / release", "Jump / stomp", "Grab / drop / struggle", "Short hop", "Hop forward", "Hop", "Hop to a log")}</b>
-                        <small>{byCourse(activeCourse, "Leap at the swing’s edge", "Land on monkeys to make them dizzy", "Pick up what’s nearest; mash to break free", "Bank → mouth or head · head → back · back → next head", "Same as →, one row at a time", "Lifts the stilts clear of a bite — too low for a boulder", "Aim and steer it onto a log — miss and it's the piranhas")}</small>
+                        <b>{byCourse(activeCourse, "Jump / release", "Jump / stomp", "Grab / drop / struggle", "Short hop", "Hop forward", "Hop", "Hop to a log", "Jump / let go")}</b>
+                        <small>{byCourse(activeCourse, "Leap at the swing’s edge", "Land on monkeys to make them dizzy", "Pick up what’s nearest; mash to break free", "Bank → mouth or head · head → back · back → next head", "Same as →, one row at a time", "Lifts the stilts clear of a bite — too low for a boulder", "Aim and steer it onto a log — miss and it's the piranhas", "Under a branch: jump and catch it. While hanging: let go and drop")}</small>
                       </span>
                     </div>
                     {activeCourse === 1 && (
@@ -6713,10 +7762,16 @@ export default function Home() {
                         <span><b>Walk &amp; aim</b><small>Move on the bank, and steer your jump through the air onto a log</small></span>
                       </div>
                     )}
+                    {activeCourse === 8 && (
+                      <div className="control-row important-control">
+                        <span className="key-pair"><kbd>SPACE</kbd><kbd>↑</kbd></span>
+                        <span><b>Climb the branch</b><small>Jump to catch it, then ↑ to climb on top — only then are you safe. Getting down is the reverse: ↓ to hang, then SPACE</small></span>
+                      </div>
+                    )}
                     {activeCourse !== 4 && activeCourse !== 5 && activeCourse !== 7 && (
                       <div className="control-row">
                         <span className="wide-key"><kbd>X</kbd></span>
-                        <span><b>Run</b><small>{activeCourse === 3 ? "Not while a rodent is raised" : activeCourse === 6 ? "Faster than a charging pig — walking is not" : "Build a longer jump"}</small></span>
+                        <span><b>Run</b><small>{activeCourse === 3 ? "Not while a rodent is raised" : activeCourse === 6 ? "Faster than a charging pig — walking is not" : activeCourse === 8 ? "Still slower than a charging lion — so pick your moment" : "Build a longer jump"}</small></span>
                       </div>
                     )}
                     <div className="field-tip">
@@ -6732,6 +7787,7 @@ export default function Home() {
                           "Stepping on a snake and hopping straight back to your root is always safe — use it to peek at every snake in the maze, then memorize the way.",
                           "Watch the WALL mark on the stilt meter: above it you can climb out, below it you can't. Pigs only bite planted stilts, and the top of a boulder is out of their reach — rest there until the pig wanders off, then run.",
                           "No log ever beats the current — spinning only slows how fast you sink. When the DISTANCE TO FALLS meter runs low, don't try to spin your way up: aim a jump at a higher log and HOP up to it. Nothing lines the jump up for you, so pick your moment.",
+                          "Hanging from a branch is NOT safe — the lion leaps and pulls you down, so always follow the jump with ↑. Go when the lion is looking away AND is not between you and your next tree: a lion that walks off to the next tree will turn round right when you get there. A lion that has stopped is about to look around.",
                         )}
                       </p>
                     </div>
@@ -6741,7 +7797,7 @@ export default function Home() {
                   <span>
                     {hasStarted
                       ? "RESUME COURSE"
-                      : byCourse(activeCourse, "BEGIN CROSSING", "BEGIN THE CLIMB", "BRAVE THE SKIES", "HOP THE RIVER", "ENTER THE TANGLE", "BRAVE THE VALLEY", "RIDE THE LOGS")}
+                      : byCourse(activeCourse, "BEGIN CROSSING", "BEGIN THE CLIMB", "BRAVE THE SKIES", "HOP THE RIVER", "ENTER THE TANGLE", "BRAVE THE VALLEY", "RIDE THE LOGS", "FACE THE LION")}
                   </span>
                   <span aria-hidden="true">→</span>
                 </button>
@@ -6752,7 +7808,7 @@ export default function Home() {
           {overlay === "gameover" && (
             <div className="game-overlay result-overlay" role="dialog" aria-modal="true" aria-labelledby="gameover-title">
               <div className="result-card">
-                <span className="result-icon" aria-hidden="true">{byCourse(activeCourse, "〰", "▲", "▼", "💦", "〽", "🐗", riverLoss === "waterfall" ? "🌊" : "🐟")}</span>
+                <span className="result-icon" aria-hidden="true">{byCourse(activeCourse, "〰", "▲", "▼", "💦", "〽", "🐗", riverLoss === "waterfall" ? "🌊" : "🐟", "🦁")}</span>
                 <p className="eyebrow">THE JUNGLE GOT YOU</p>
                 <h2 id="gameover-title">
                   {byCourse(
@@ -6778,6 +7834,9 @@ export default function Home() {
                     riverLoss === "waterfall"
                       ? "You fell down the waterfall… too bad!"
                       : "You became piranha lunch… ouch!",
+                    lionLoss === "hanging"
+                      ? "Pulled off the branch!"
+                      : "The lion caught you in the open!",
                   )}
                 </h2>
                 <p>
@@ -6804,6 +7863,9 @@ export default function Home() {
                     riverLoss === "waterfall"
                       ? "The current always wins — no log climbs, it only slows the fall. Before the DISTANCE TO FALLS meter runs out, aim a jump at a higher log and HOP up. You can't spin your way back up."
                       : "Only jump when you can see a log to land on, and steer the leap with the arrows all the way onto it. Leap into open water and the piranhas are waiting.",
+                    lionLoss === "hanging"
+                      ? "Catching the branch is only half the move — a lion can leap at anyone hanging. Press ↑ the moment you catch it, and don't run for a tree the lion is already heading to."
+                      : "The lion charges anything it sees on the ground, and it runs faster than you. Only leave cover while it is looking away and isn't between you and the next tree — and never run toward it.",
                   )}
                 </p>
                 <button className="primary-button compact" onClick={restartCourse} type="button">
@@ -6817,8 +7879,8 @@ export default function Home() {
             <div className="game-overlay result-overlay win-overlay" role="dialog" aria-modal="true" aria-labelledby="win-title">
               <div className="result-card">
                 <span className="result-icon gold" aria-hidden="true">✦</span>
-                <p className="eyebrow">COURSE 0{activeCourse} COMPLETE</p>
-                <h2 id="win-title">Both explorers made it across!</h2>
+                <p className="eyebrow">{activeCourse === 8 ? "EXPEDITION COMPLETE" : `COURSE 0${activeCourse} COMPLETE`}</p>
+                <h2 id="win-title">{activeCourse === 8 ? "The Golden Pumpkin is found!" : "Both explorers made it across!"}</h2>
                 <p>
                   {byCourse(
                     activeCourse,
@@ -6829,6 +7891,7 @@ export default function Home() {
                     "Twenty rows of vipers and not one bite. Beyond the trees the ground drops into a valley where wild pigs root and squeal.",
                     "Up and over the far wall with wood to spare, and not a single boar caught you. Ahead, the trail is cut by a wide river racing toward a waterfall.",
                     "Across the river without a splash — the piranhas go hungry and the waterfall roars behind you. One last guardian stands between you and the Golden Pumpkin.",
+                    "The lion never laid a paw on you. Guto and Nanda lift the Golden Pumpkin from its shrine, and its light spills back across the savanna, the river, the valley, and every tree of the jungle. Eight guardians, one golden prize — the expedition is complete.",
                   )}
                 </p>
                 <div className="result-actions">
@@ -6856,9 +7919,13 @@ export default function Home() {
                     <button className="primary-button compact" onClick={() => selectCourse(7)} type="button">
                       PLAY COURSE 07 <span aria-hidden="true">→</span>
                     </button>
+                  ) : activeCourse === 7 ? (
+                    <button className="primary-button compact" onClick={() => selectCourse(8)} type="button">
+                      PLAY COURSE 08 <span aria-hidden="true">→</span>
+                    </button>
                   ) : (
-                    <button className="primary-button compact" onClick={() => document.querySelector("#expedition")?.scrollIntoView({ behavior: "smooth" })} type="button">
-                      VIEW EXPEDITION <span aria-hidden="true">↓</span>
+                    <button className="primary-button compact" onClick={() => selectCourse(1)} type="button">
+                      PLAY AGAIN FROM COURSE 01 <span aria-hidden="true">↻</span>
                     </button>
                   )}
                   <button className="secondary-button" onClick={restartCourse} type="button">REPLAY</button>
@@ -6886,7 +7953,7 @@ export default function Home() {
               aria-label="Move right"
               type="button"
             >→</button>
-            {(activeCourse === 1 || activeCourse === 5 || activeCourse === 7) && (
+            {(activeCourse === 1 || activeCourse === 5 || activeCourse === 7 || activeCourse === 8) && (
               <>
                 <button
                   onPointerDown={() => pressControl("ArrowUp")}
@@ -6910,17 +7977,17 @@ export default function Home() {
           <div>
             <button
               className="grab-touch"
-              onPointerDown={() => pressControl(activeCourse === 2 || activeCourse === 6 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : activeCourse === 7 ? "ArrowUp" : "KeyZ")}
-              onPointerUp={() => releaseControl(activeCourse === 2 || activeCourse === 6 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : activeCourse === 7 ? "ArrowUp" : "KeyZ")}
-              onPointerCancel={() => releaseControl(activeCourse === 2 || activeCourse === 6 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : activeCourse === 7 ? "ArrowUp" : "KeyZ")}
-              onPointerLeave={() => releaseControl(activeCourse === 2 || activeCourse === 6 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : activeCourse === 7 ? "ArrowUp" : "KeyZ")}
-              aria-label={byCourse(activeCourse, "Grab and hold vine", "Run", "Raise rodent or eat fruit", "Hold to charge a long jump", "Hop back a row", "Run to outrun the pigs", "Aim your hop upstream")}
+              onPointerDown={() => pressControl(activeCourse === 2 || activeCourse === 6 || activeCourse === 8 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : activeCourse === 7 ? "ArrowUp" : "KeyZ")}
+              onPointerUp={() => releaseControl(activeCourse === 2 || activeCourse === 6 || activeCourse === 8 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : activeCourse === 7 ? "ArrowUp" : "KeyZ")}
+              onPointerCancel={() => releaseControl(activeCourse === 2 || activeCourse === 6 || activeCourse === 8 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : activeCourse === 7 ? "ArrowUp" : "KeyZ")}
+              onPointerLeave={() => releaseControl(activeCourse === 2 || activeCourse === 6 || activeCourse === 8 ? "KeyX" : activeCourse === 5 ? "ArrowLeft" : activeCourse === 7 ? "ArrowUp" : "KeyZ")}
+              aria-label={byCourse(activeCourse, "Grab and hold vine", "Run", "Raise rodent or eat fruit", "Hold to charge a long jump", "Hop back a row", "Run to outrun the pigs", "Aim your hop upstream", "Run across the savanna")}
               type="button"
-            >{byCourse(activeCourse, "GRAB", "RUN", "RAISE", "CHARGE", "BACK", "RUN", "UP ↑")}</button>
+            >{byCourse(activeCourse, "GRAB", "RUN", "RAISE", "CHARGE", "BACK", "RUN", "UP ↑", "RUN")}</button>
             <button
               className="jump-touch"
               onPointerDown={tapJump}
-              aria-label={byCourse(activeCourse, "Jump or release vine", "Jump or stomp", "Grab, drop, or struggle", "Hop, or leap while charging", "Hop forward a row", "Vault over a boulder", "Hop to a log")}
+              aria-label={byCourse(activeCourse, "Jump or release vine", "Jump or stomp", "Grab, drop, or struggle", "Hop, or leap while charging", "Hop forward a row", "Vault over a boulder", "Hop to a log", "Jump for a branch, or let go")}
               type="button"
             >{activeCourse === 3 ? "GRAB" : activeCourse === 5 ? "HOP" : activeCourse === 6 ? "VAULT" : activeCourse === 7 ? "HOP" : "JUMP"}</button>
           </div>
@@ -6970,12 +8037,19 @@ export default function Home() {
             <div><kbd className="long accent">Z + SPACE</kbd><span><b>VAULT</b> Clear the boulders with a run-up</span></div>
             <div><kbd className="long">WALL</kbd><span><b>STILTS SHRINK</b> Below the mark you can’t climb out</span></div>
           </>
-        ) : (
+        ) : activeCourse === 7 ? (
           <>
             <div><kbd>←→</kbd><span><b>SPIN / WALK</b> Spin the log, or walk the bank</span></div>
             <div><kbd className="long">SPACE</kbd><span><b>HOP</b> Aim &amp; steer onto a log</span></div>
             <div><kbd className="long accent">↑↓</kbd><span><b>STEER THE JUMP</b> Guide the leap in the air</span></div>
             <div><kbd className="long">FALLS</kbd><span><b>THE CURRENT WINS</b> Hop UP before you sink</span></div>
+          </>
+        ) : (
+          <>
+            <div><kbd>←→</kbd><span><b>RUN</b> Only while the lion looks away</span></div>
+            <div><kbd className="long accent">SPACE + ↑</kbd><span><b>CLIMB A BRANCH</b> Jump to catch it, ↑ to be safe</span></div>
+            <div><kbd className="long">↓ + SPACE</kbd><span><b>GET DOWN</b> Hang first, then let go</span></div>
+            <div><kbd className="long">GAZE</kbd><span><b>THE LION CHARGES</b> Whatever it can see</span></div>
           </>
         )}
       </section>
@@ -6996,11 +8070,11 @@ export default function Home() {
           {courses.map((course, index) => (
             <button
               className={`course-card ${index === activeCourse - 1 ? "current" : ""}`}
-              disabled={index > 6}
+              disabled={index > 7}
               key={course.number}
               onClick={() => selectCourse((index + 1) as CourseNumber)}
               type="button"
-              aria-label={index < 7 ? `Play course ${course.number}: ${course.title}` : `${course.title} is planned`}
+              aria-label={`Play course ${course.number}: ${course.title}`}
             >
               <div className="course-card-top">
                 <span className="course-number">{course.number}</span>
