@@ -187,6 +187,9 @@ type GameState = {
   pig: PigCourseState;
   river: RiverCourseState;
   lion: LionCourseState;
+  finaleTime: number | null;
+  finaleDone: boolean;
+  finaleCue: number;
   notice: string;
   noticeTimer: number;
   running: boolean;
@@ -319,7 +322,7 @@ const courses = [
     skill: "Watch, climb & wait",
     icon: "🦁",
     status: "FINALE",
-    description: "Cross the open savanna under the eyes of a lion. Jump for a branch and climb it to be safe; move only when the lion is looking away — the Golden Pumpkin waits at the far end.",
+    description: "Cross the open savanna under the eyes of a lion. Jump for a branch and climb it to be safe; move only when the lion is looking away — the mountain trail to the Golden Pumpkin begins at the far end.",
   },
 ];
 
@@ -383,6 +386,9 @@ function makeGame(course: CourseNumber = 1, snakeSeed = 5): GameState {
     pig: makePigCourse(Math.floor(Math.random() * 1e9)),
     river: makeRiverCourse(Math.floor(Math.random() * 1e9)),
     lion: makeLionCourse(Math.floor(Math.random() * 1e9)),
+    finaleTime: null,
+    finaleDone: false,
+    finaleCue: 0,
     notice: "",
     noticeTimer: 0,
     running: false,
@@ -5671,7 +5677,7 @@ function drawLionHud(ctx: CanvasRenderingContext2D, game: GameState, sees: boole
     ctx.fillStyle = field.won || sheltered ? "#b4ec6d" : hanging ? "#ff6b52" : onRocks ? "#b4ec6d" : "rgba(255,242,207,.7)";
     ctx.fillText(
       field.won
-        ? "YOU: THE GOLDEN PUMPKIN IS YOURS!"
+        ? "YOU: THROUGH THE GATE — THE MOUNTAIN IS NEXT"
         : sheltered
         ? "YOU: SAFE ON THE BRANCH — ↓ then SPACE to get down"
         : hanging
@@ -5695,7 +5701,7 @@ function drawLionHud(ctx: CanvasRenderingContext2D, game: GameState, sees: boole
   ctx.fillStyle = "rgba(255,242,207,.72)";
   ctx.font = "900 10px Arial";
   ctx.textAlign = "left";
-  ctx.fillText("TO THE GOLDEN PUMPKIN", WORLD_WIDTH - 18 - 234, 38);
+  ctx.fillText("CROSS THE SAVANNA", WORLD_WIDTH - 18 - 234, 38);
   const progress = lionProgress(field);
   ctx.fillStyle = "rgba(255,245,215,.18)";
   roundedRect(ctx, WORLD_WIDTH - 18 - 234, 48, 216, 12, 6);
@@ -5725,6 +5731,503 @@ function drawLionHud(ctx: CanvasRenderingContext2D, game: GameState, sees: boole
     ctx.font = "900 12px Arial";
     ctx.textAlign = "center";
     ctx.fillText(game.notice, 600, 115);
+  }
+}
+
+// The ending: after the lion, a winding climb up the mountain to the Golden
+// Pumpkin, a celebration at the summit, and a close-up as the screen rises.
+const FINALE_BASE_Y = 1880;
+const FINALE_SUMMIT_Y = 400;
+const FINALE_SUMMIT_X = 600;
+const FINALE_CLIMB_START = 1.4;
+const FINALE_CLIMB_END = 14;
+const FINALE_LIFT_END = 15.8;
+const FINALE_RISE_START = 22.5;
+const FINALE_RISE_END = 25.5;
+const FINALE_END = 29;
+
+function hash01(n: number) {
+  const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+function easeInOut(t: number) {
+  const c = Math.max(0, Math.min(1, t));
+  return c < 0.5 ? 2 * c * c : 1 - Math.pow(-2 * c + 2, 2) / 2;
+}
+
+function easeOut(t: number) {
+  const c = Math.max(0, Math.min(1, t));
+  return 1 - (1 - c) * (1 - c);
+}
+
+// The curly path: switchbacks that tighten as the mountain narrows
+function finalePath(s: number) {
+  const t = Math.max(0, Math.min(1, s));
+  const amplitude = 330 * (1 - t) + 26;
+  const angle = t * Math.PI * 5;
+  const x = FINALE_SUMMIT_X + Math.sin(angle) * amplitude;
+  const y = FINALE_BASE_Y - t * (FINALE_BASE_Y - FINALE_SUMMIT_Y);
+  const dx = Math.cos(angle) * amplitude * Math.PI * 5 - Math.sin(angle) * 330;
+  return { x, y, dx };
+}
+
+function mountainHalfWidth(t: number) {
+  // Convex profile: a broad foot and a proper cone at the top
+  return 56 + 520 * Math.pow(1 - Math.max(0, Math.min(1, t)), 0.55);
+}
+
+function drawBalloon(ctx: CanvasRenderingContext2D, x: number, y: number, color: string, size: number, sway: number) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.strokeStyle = "rgba(255,255,255,.55)";
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(0, size * 1.3);
+  ctx.quadraticCurveTo(sway * 6, size * 2.2, -sway * 4, size * 3.4);
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, size, size * 1.24, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(-size * 0.18, size * 1.2);
+  ctx.lineTo(size * 0.18, size * 1.2);
+  ctx.lineTo(0, size * 1.42);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "rgba(255,255,255,.45)";
+  ctx.beginPath();
+  ctx.ellipse(-size * 0.35, -size * 0.45, size * 0.24, size * 0.4, -0.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawFirework(ctx: CanvasRenderingContext2D, x: number, y: number, life: number, hue: number, radius: number, seed: number) {
+  // life: 0 at the burst, 1 fully faded. A rocket streak precedes it (life < 0).
+  if (life < 0) {
+    const rise = 1 + life / 0.7;
+    if (rise < 0) return;
+    const ry = WORLD_HEIGHT + 20 - (WORLD_HEIGHT + 20 - y) * easeOut(rise);
+    ctx.strokeStyle = `hsla(${hue},90%,80%,${0.8})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x, ry + 26);
+    ctx.lineTo(x, ry);
+    ctx.stroke();
+    ctx.fillStyle = "#fff8d8";
+    ctx.beginPath();
+    ctx.arc(x, ry, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    return;
+  }
+  const spread = easeOut(life) * radius;
+  const fade = 1 - life;
+  const count = 22;
+  for (let i = 0; i < count; i += 1) {
+    const angle = (i / count) * Math.PI * 2 + hash01(seed + i) * 0.2;
+    const len = spread * (0.75 + hash01(seed * 3 + i) * 0.35);
+    const px = x + Math.cos(angle) * len;
+    const py = y + Math.sin(angle) * len + life * life * 70;
+    ctx.fillStyle = `hsla(${hue + (i % 3) * 14},95%,${65 + (i % 2) * 15}%,${fade})`;
+    ctx.beginPath();
+    ctx.arc(px, py, 3.2 * (1 - life * 0.6), 0, Math.PI * 2);
+    ctx.fill();
+    // trailing spark
+    ctx.strokeStyle = `hsla(${hue},95%,75%,${fade * 0.5})`;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.lineTo(x + Math.cos(angle) * len * 0.72, y + Math.sin(angle) * len * 0.72 + life * life * 50);
+    ctx.stroke();
+  }
+  if (life < 0.25) {
+    ctx.fillStyle = `rgba(255,250,220,${(0.25 - life) * 3})`;
+    ctx.beginPath();
+    ctx.arc(x, y, 18 * (1 - life * 4) + 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawFinale(ctx: CanvasRenderingContext2D, game: GameState, activeCharacter: Character) {
+  const t = game.finaleTime ?? 0;
+  const elapsed = game.elapsed;
+  const companion: Character = activeCharacter === "guto" ? "nanda" : "guto";
+  ctx.clearRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+
+  const climb = easeInOut((t - FINALE_CLIMB_START) / (FINALE_CLIMB_END - FINALE_CLIMB_START));
+  const rise = easeInOut((t - FINALE_RISE_START) / (FINALE_RISE_END - FINALE_RISE_START));
+  const celebrating = t >= FINALE_LIFT_END;
+
+  const leader = finalePath(climb);
+  const follower = finalePath(climb - 0.035);
+  let cameraY = leader.y - 400;
+  cameraY = Math.min(cameraY, FINALE_BASE_Y - 560);
+  cameraY -= rise * 460;
+
+  // Sky: warm at the foot of the mountain, deepening to dusk as the camera climbs
+  const low = FINALE_BASE_Y - 560;
+  const high = FINALE_SUMMIT_Y - 400 - 460;
+  const h = Math.max(0, Math.min(1, (low - cameraY) / (low - high)));
+  const mix = (a: number[], b: number[], k: number) => a.map((v, i) => Math.round(v + (b[i] - v) * k));
+  const topColor = mix([132, 190, 228], [24, 26, 72], h);
+  const midColor = mix([214, 220, 210], [88, 60, 118], h);
+  const bottomColor = mix([246, 218, 160], [214, 130, 96], h);
+  const sky = ctx.createLinearGradient(0, 0, 0, WORLD_HEIGHT);
+  sky.addColorStop(0, `rgb(${topColor.join(",")})`);
+  sky.addColorStop(0.55, `rgb(${midColor.join(",")})`);
+  sky.addColorStop(1, `rgb(${bottomColor.join(",")})`);
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+  // Stars fade in with height
+  if (h > 0.35) {
+    const starAlpha = (h - 0.35) / 0.65;
+    for (let star = 0; star < 90; star += 1) {
+      const sx = hash01(star * 7 + 1) * WORLD_WIDTH;
+      const sy = hash01(star * 13 + 5) * WORLD_HEIGHT * 0.8 + (cameraY * 0.08) % 40;
+      const twinkle = 0.5 + Math.sin(elapsed * 2 + star) * 0.5;
+      ctx.fillStyle = `rgba(255,250,230,${starAlpha * (0.35 + twinkle * 0.65)})`;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 0.8 + hash01(star) * 1.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // The moon
+    ctx.fillStyle = `rgba(255,246,214,${starAlpha * 0.95})`;
+    ctx.beginPath();
+    ctx.arc(980, 96, 34, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = `rgba(${topColor.join(",")},${starAlpha})`;
+    ctx.beginPath();
+    ctx.arc(966, 86, 28, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Sun low on the horizon while we are still low
+  if (h < 0.7) {
+    const sun = ctx.createRadialGradient(1000, 300, 10, 1000, 300, 220);
+    sun.addColorStop(0, `rgba(255,240,190,${0.9 * (1 - h / 0.7)})`);
+    sun.addColorStop(1, "rgba(255,220,150,0)");
+    ctx.fillStyle = sun;
+    ctx.fillRect(760, 60, 480, 480);
+  }
+
+  ctx.save();
+  ctx.translate(0, -cameraY);
+
+  // Far ridges behind the mountain
+  ctx.fillStyle = `rgba(${mix([150, 140, 170], [40, 36, 80], h).join(",")},.85)`;
+  ctx.beginPath();
+  ctx.moveTo(-40, FINALE_BASE_Y + 200);
+  for (let x = -40; x <= WORLD_WIDTH + 80; x += 120) {
+    const peak = FINALE_BASE_Y - 420 - Math.abs(Math.sin(x * 0.011 + 1.3)) * 520;
+    ctx.lineTo(x + 60, peak);
+  }
+  ctx.lineTo(WORLD_WIDTH + 80, FINALE_BASE_Y + 200);
+  ctx.closePath();
+  ctx.fill();
+
+  // Clouds drifting at a few heights
+  for (let cloud = 0; cloud < 7; cloud += 1) {
+    const cy = FINALE_SUMMIT_Y + 120 + cloud * 210;
+    const cx = ((cloud * 331 + elapsed * (5 + cloud)) % (WORLD_WIDTH + 320)) - 160;
+    ctx.fillStyle = "rgba(255,255,255,.55)";
+    for (const [dx, dy, r] of [[0, 0, 30], [34, 8, 24], [-34, 8, 22], [10, -10, 20]] as const) {
+      ctx.beginPath();
+      ctx.arc(cx + dx, cy + dy, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // The mountain body
+  const rockTop = mix([150, 132, 118], [82, 66, 96], h);
+  const rockBottom = mix([96, 82, 66], [46, 36, 52], h);
+  const rock = ctx.createLinearGradient(0, FINALE_SUMMIT_Y, 0, FINALE_BASE_Y);
+  rock.addColorStop(0, `rgb(${rockTop.join(",")})`);
+  rock.addColorStop(1, `rgb(${rockBottom.join(",")})`);
+  ctx.fillStyle = rock;
+  ctx.beginPath();
+  ctx.moveTo(FINALE_SUMMIT_X - mountainHalfWidth(0) - 60, FINALE_BASE_Y + 40);
+  for (let i = 0; i <= 40; i += 1) {
+    const s = i / 40;
+    const w = mountainHalfWidth(s) + Math.sin(s * 23) * 22;
+    ctx.lineTo(FINALE_SUMMIT_X - w, FINALE_BASE_Y - s * (FINALE_BASE_Y - FINALE_SUMMIT_Y) - 20);
+  }
+  ctx.lineTo(FINALE_SUMMIT_X - 60, FINALE_SUMMIT_Y - 20);
+  ctx.lineTo(FINALE_SUMMIT_X + 60, FINALE_SUMMIT_Y - 20);
+  for (let i = 40; i >= 0; i -= 1) {
+    const s = i / 40;
+    const w = mountainHalfWidth(s) + Math.cos(s * 19) * 22;
+    ctx.lineTo(FINALE_SUMMIT_X + w, FINALE_BASE_Y - s * (FINALE_BASE_Y - FINALE_SUMMIT_Y) - 20);
+  }
+  ctx.lineTo(FINALE_SUMMIT_X + mountainHalfWidth(0) + 60, FINALE_BASE_Y + 40);
+  ctx.closePath();
+  ctx.fill();
+  // Ridge lines and rock shading
+  for (let ridge = 0; ridge < 14; ridge += 1) {
+    const s = 0.08 + ridge * 0.065;
+    const y = FINALE_BASE_Y - s * (FINALE_BASE_Y - FINALE_SUMMIT_Y);
+    const w = mountainHalfWidth(s);
+    ctx.strokeStyle = ridge % 2 ? "rgba(0,0,0,.16)" : "rgba(255,255,255,.1)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(FINALE_SUMMIT_X - w * 0.9, y + 30);
+    ctx.quadraticCurveTo(FINALE_SUMMIT_X - w * 0.3, y - 18 + (ridge % 3) * 10, FINALE_SUMMIT_X + w * 0.6, y + 22);
+    ctx.stroke();
+  }
+  // Snow cap: follows the mountain's own edges down to a ragged snow line
+  const snowLine = 0.8;
+  ctx.fillStyle = "rgba(250,250,255,.94)";
+  ctx.beginPath();
+  ctx.moveTo(FINALE_SUMMIT_X - mountainHalfWidth(1), FINALE_SUMMIT_Y - 20);
+  ctx.lineTo(FINALE_SUMMIT_X + mountainHalfWidth(1), FINALE_SUMMIT_Y - 20);
+  for (let i = 0; i <= 10; i += 1) {
+    const s = 1 - (1 - snowLine) * (i / 10);
+    const w = mountainHalfWidth(s) + Math.cos(s * 19) * 22;
+    ctx.lineTo(FINALE_SUMMIT_X + w, FINALE_BASE_Y - s * (FINALE_BASE_Y - FINALE_SUMMIT_Y) - 20);
+  }
+  const lineY = FINALE_BASE_Y - snowLine * (FINALE_BASE_Y - FINALE_SUMMIT_Y) - 20;
+  const lineW = mountainHalfWidth(snowLine);
+  for (let i = 0; i <= 12; i += 1) {
+    const x = FINALE_SUMMIT_X + lineW - (lineW * 2 * i) / 12;
+    ctx.lineTo(x, lineY + (i % 2 ? 26 : -8) + Math.sin(i * 1.9) * 12);
+  }
+  for (let i = 10; i >= 0; i -= 1) {
+    const s = 1 - (1 - snowLine) * (i / 10);
+    const w = mountainHalfWidth(s) + Math.sin(s * 23) * 22;
+    ctx.lineTo(FINALE_SUMMIT_X - w, FINALE_BASE_Y - s * (FINALE_BASE_Y - FINALE_SUMMIT_Y) - 20);
+  }
+  ctx.closePath();
+  ctx.fill();
+  for (let patch = 0; patch < 9; patch += 1) {
+    const s = snowLine + (1 - snowLine) * (0.05 + hash01(patch * 3 + 1) * 0.8);
+    const w = mountainHalfWidth(s);
+    const x = FINALE_SUMMIT_X + (hash01(patch * 5 + 2) * 2 - 1) * w * 0.8;
+    const y = FINALE_BASE_Y - s * (FINALE_BASE_Y - FINALE_SUMMIT_Y) - 20;
+    ctx.fillStyle = `rgba(${rockTop.join(",")},.9)`;
+    ctx.beginPath();
+    ctx.ellipse(x, y, 16 + hash01(patch * 7) * 22, 7 + hash01(patch * 11) * 8, 0.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.strokeStyle = "rgba(160,170,210,.35)";
+  ctx.lineWidth = 3;
+  for (let drift = 0; drift < 6; drift += 1) {
+    const s = snowLine + (1 - snowLine) * (0.15 + drift * 0.13);
+    const y = FINALE_BASE_Y - s * (FINALE_BASE_Y - FINALE_SUMMIT_Y) - 20;
+    const w = mountainHalfWidth(s) * 0.7;
+    ctx.beginPath();
+    ctx.moveTo(FINALE_SUMMIT_X - w, y + 8);
+    ctx.quadraticCurveTo(FINALE_SUMMIT_X - w * 0.2, y - 10 + (drift % 2) * 14, FINALE_SUMMIT_X + w * 0.9, y + 6);
+    ctx.stroke();
+  }
+  // Pines on the lower slopes and the plain at the foot
+  ctx.fillStyle = `rgb(${mix([84, 140, 70], [30, 60, 44], h).join(",")})`;
+  ctx.fillRect(-20, FINALE_BASE_Y, WORLD_WIDTH + 40, 400);
+  for (let tree = 0; tree < 60; tree += 1) {
+    const s = hash01(tree * 3 + 2) * 0.42;
+    const side = tree % 2 ? 1 : -1;
+    const w = mountainHalfWidth(s);
+    const x = FINALE_SUMMIT_X + side * (w * (0.45 + hash01(tree * 5) * 0.62));
+    const y = FINALE_BASE_Y - s * (FINALE_BASE_Y - FINALE_SUMMIT_Y) + 10;
+    const size = 14 + hash01(tree * 7) * 12;
+    ctx.fillStyle = tree % 3 ? `rgb(${mix([52, 110, 60], [22, 46, 40], h).join(",")})` : `rgb(${mix([70, 130, 66], [30, 58, 46], h).join(",")})`;
+    ctx.beginPath();
+    ctx.moveTo(x, y - size * 2);
+    ctx.lineTo(x + size * 0.6, y);
+    ctx.lineTo(x - size * 0.6, y);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // The curly path
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  const tracePath = () => {
+    ctx.beginPath();
+    for (let i = 0; i <= 160; i += 1) {
+      const p = finalePath(i / 160);
+      if (i === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    }
+  };
+  tracePath();
+  ctx.strokeStyle = "rgba(40,28,20,.55)";
+  ctx.lineWidth = 26;
+  ctx.stroke();
+  tracePath();
+  ctx.strokeStyle = `rgb(${mix([214, 184, 120], [120, 96, 88], h).join(",")})`;
+  ctx.lineWidth = 18;
+  ctx.stroke();
+  tracePath();
+  ctx.strokeStyle = "rgba(255,240,200,.25)";
+  ctx.lineWidth = 3;
+  ctx.setLineDash([10, 14]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // Stones and bushes beside the path
+  for (let stone = 0; stone < 46; stone += 1) {
+    const p = finalePath(hash01(stone * 11 + 3));
+    const side = stone % 2 ? 1 : -1;
+    const ox = side * (16 + hash01(stone * 4) * 12);
+    if (stone % 3 === 0) {
+      ctx.fillStyle = "rgba(60,90,50,.8)";
+      ctx.beginPath();
+      ctx.ellipse(p.x + ox, p.y - 4, 9, 6, 0, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.fillStyle = "rgba(120,110,100,.8)";
+      ctx.beginPath();
+      ctx.ellipse(p.x + ox, p.y - 2, 6, 4, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  // Flags marking the way
+  for (let flag = 1; flag <= 4; flag += 1) {
+    const p = finalePath(flag * 0.2);
+    ctx.strokeStyle = "#4a3320";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(p.x + 22, p.y);
+    ctx.lineTo(p.x + 22, p.y - 34);
+    ctx.stroke();
+    ctx.fillStyle = flag % 2 ? "#e0533f" : "#f0c040";
+    ctx.beginPath();
+    ctx.moveTo(p.x + 22, p.y - 34);
+    ctx.lineTo(p.x + 40 + Math.sin(elapsed * 5 + flag) * 3, p.y - 28);
+    ctx.lineTo(p.x + 22, p.y - 22);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // The summit platform and the pedestal
+  ctx.fillStyle = "#8b7a68";
+  roundedRect(ctx, FINALE_SUMMIT_X - 84, FINALE_SUMMIT_Y - 8, 168, 30, 8);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255,255,255,.5)";
+  roundedRect(ctx, FINALE_SUMMIT_X - 84, FINALE_SUMMIT_Y - 8, 168, 6, 3);
+  ctx.fill();
+  ctx.fillStyle = "#a89684";
+  roundedRect(ctx, FINALE_SUMMIT_X - 26, FINALE_SUMMIT_Y - 30, 52, 24, 5);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255,245,215,.3)";
+  ctx.fillRect(FINALE_SUMMIT_X - 26, FINALE_SUMMIT_Y - 30, 52, 3);
+
+  // The explorers
+  const summitFeet = FINALE_SUMMIT_Y - 4;
+  const hop = celebrating ? Math.abs(Math.sin(elapsed * 6.5)) * 14 : 0;
+  const pumpkinRest = { x: FINALE_SUMMIT_X, y: FINALE_SUMMIT_Y - 30 };
+  if (t < FINALE_CLIMB_END) {
+    const step = climb > 0 && climb < 1;
+    const leadFacing = leader.dx >= 0 ? 1 : -1;
+    const followFacing = follower.dx >= 0 ? 1 : -1;
+    drawCharacter(ctx, follower.x, follower.y, companion, followFacing, elapsed, step ? "run" : "idle", 190, 0.92);
+    drawCharacter(ctx, leader.x, leader.y, activeCharacter, leadFacing, elapsed, step ? "run" : "idle", 200, 0.92);
+    drawGoldenPumpkin(ctx, pumpkinRest.x, pumpkinRest.y, elapsed, 0.15);
+  } else {
+    // Walk to either side of the pedestal, then lift the pumpkin together
+    const settle = easeOut((t - FINALE_CLIMB_END) / 0.7);
+    const leadX = leader.x + (FINALE_SUMMIT_X - 40 - leader.x) * settle;
+    const followX = follower.x + (FINALE_SUMMIT_X + 40 - follower.x) * settle;
+    const followY = follower.y + (summitFeet - follower.y) * settle;
+    const lifting = settle >= 1;
+    const liftAmount = lifting ? easeOut((t - FINALE_CLIMB_END - 0.7) / 0.9) : 0;
+    const motion: CharacterMotion = lifting ? "lift" : settle < 1 ? "run" : "idle";
+    drawCharacter(ctx, leadX, summitFeet - hop, activeCharacter, 1, elapsed, motion, 120, 0.92);
+    drawCharacter(ctx, followX, followY - hop, companion, -1, elapsed, motion, 120, 0.92);
+    const px = FINALE_SUMMIT_X;
+    const py = pumpkinRest.y + (summitFeet - 92 - pumpkinRest.y) * liftAmount - hop;
+    if (rise < 0.3) drawGoldenPumpkin(ctx, px, py, elapsed, 0.2 + liftAmount * 0.5);
+  }
+
+  ctx.restore();
+
+  // Celebration: fireworks, confetti and balloons in screen space
+  if (celebrating) {
+    const since = t - FINALE_LIFT_END;
+    for (let i = 0; i < 26; i += 1) {
+      const launch = i * 0.62 + hash01(i * 9) * 0.35;
+      const life = (since - launch - 0.7) / 1.9;
+      if (life > 1) continue;
+      const fx = 120 + hash01(i * 17 + 4) * (WORLD_WIDTH - 240);
+      const fy = 60 + hash01(i * 23 + 8) * 240;
+      drawFirework(ctx, fx, fy, life, (i * 47) % 360, 70 + hash01(i * 31) * 80, i * 101);
+    }
+    for (let bit = 0; bit < 90; bit += 1) {
+      const speed = 60 + hash01(bit * 3) * 80;
+      const y = ((since * speed + hash01(bit * 5) * WORLD_HEIGHT) % (WORLD_HEIGHT + 40)) - 20;
+      const x = hash01(bit * 7 + 1) * WORLD_WIDTH + Math.sin(since * 2 + bit) * 22;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(since * 3 + bit);
+      ctx.fillStyle = ["#ffd34d", "#ff7a59", "#7ad0ff", "#b4ec6d", "#ff9be0", "#ffffff"][bit % 6];
+      ctx.fillRect(-4, -7, 8, 14);
+      ctx.restore();
+    }
+    for (let b = 0; b < 14; b += 1) {
+      const speed = 34 + hash01(b * 13) * 30;
+      const start = hash01(b * 19) * 6;
+      const age = since - start;
+      if (age < 0) continue;
+      const y = WORLD_HEIGHT + 80 - age * speed;
+      if (y < -120) continue;
+      const x = 60 + hash01(b * 29 + 2) * (WORLD_WIDTH - 120) + Math.sin(since * 1.2 + b) * 26;
+      drawBalloon(ctx, x, y, ["#ff5d5d", "#ffd23f", "#4fc3ff", "#9be36b", "#ff8ad8", "#ffa64f"][b % 6], 18 + hash01(b * 3) * 8, Math.sin(since * 2 + b));
+    }
+  }
+
+  // The close-up: the Golden Pumpkin fills the screen, turning bright
+  if (rise > 0) {
+    const grow = easeOut((rise - 0.15) / 0.85);
+    if (grow > 0) {
+      const scale = 0.6 + grow * 2.9;
+      const glow = grow;
+      ctx.save();
+      ctx.translate(WORLD_WIDTH / 2, 330 + (1 - grow) * 160);
+      ctx.scale(scale, scale);
+      drawGoldenPumpkin(ctx, 0, 14, elapsed, glow);
+      ctx.restore();
+      // Balloons floating past in the foreground
+      for (let b = 0; b < 10; b += 1) {
+        const age = (t - FINALE_RISE_START) + hash01(b * 41) * 6;
+        const y = WORLD_HEIGHT + 100 - age * (40 + hash01(b * 43) * 30);
+        if (y < -140) continue;
+        const x = 40 + hash01(b * 47 + 3) * (WORLD_WIDTH - 80) + Math.sin(t * 1.1 + b) * 30;
+        drawBalloon(ctx, x, y, ["#ff5d5d", "#ffd23f", "#4fc3ff", "#9be36b", "#ff8ad8", "#ffa64f"][b % 6], 26 + hash01(b * 5) * 14, Math.sin(t * 2 + b));
+      }
+    }
+  }
+
+  // Title cards
+  const card = (text: string, sub: string, alpha: number, y: number) => {
+    if (alpha <= 0) return;
+    ctx.fillStyle = `rgba(255,246,214,${alpha})`;
+    ctx.font = "900 34px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText(text, WORLD_WIDTH / 2, y);
+    ctx.font = "900 13px Arial";
+    ctx.fillStyle = `rgba(255,246,214,${alpha * 0.85})`;
+    ctx.fillText(sub, WORLD_WIDTH / 2, y + 28);
+  };
+  if (t < FINALE_CLIMB_START + 2.2) {
+    const alpha = t < 0.4 ? t / 0.4 : Math.max(0, 1 - (t - FINALE_CLIMB_START - 1.2) / 1);
+    card("THE LAST CLIMB", "THE GOLDEN PUMPKIN WAITS AT THE TOP OF THE MOUNTAIN", alpha, 130);
+  }
+  if (t >= FINALE_LIFT_END && t < FINALE_RISE_START + 1) {
+    const alpha = Math.min(1, (t - FINALE_LIFT_END) / 0.6) * Math.max(0, 1 - (t - FINALE_RISE_START) / 1);
+    card("THE GOLDEN PUMPKIN!", "EIGHT GUARDIANS PASSED · GUTO AND NANDA DID IT TOGETHER", alpha, 330 - hop);
+  }
+  if (t >= FINALE_RISE_END - 0.4) {
+    const alpha = Math.min(1, (t - FINALE_RISE_END + 0.4) / 0.9);
+    card("THE END", "GUTO & NANDA AND THE GOLDEN PUMPKIN", alpha, 560);
+  }
+  // Fade in from the savanna, fade the very start
+  if (t < 0.9) {
+    ctx.fillStyle = `rgba(10,8,6,${1 - t / 0.9})`;
+    ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+  }
+  if (t > 2 && t < FINALE_END - 0.5 && game.running) {
+    ctx.fillStyle = "rgba(255,246,214,.5)";
+    ctx.font = "900 10px Arial";
+    ctx.textAlign = "right";
+    ctx.fillText("SPACE ▸ SKIP", WORLD_WIDTH - 22, WORLD_HEIGHT - 16);
   }
 }
 
@@ -5801,6 +6304,28 @@ function drawLionWorld(
     ctx.fill();
   };
   drawHills(392, "#b39a8a", 80, 90);
+  // The mountain where the trail ends, far beyond the plain
+  ctx.fillStyle = "rgba(150,132,160,.9)";
+  ctx.beginPath();
+  ctx.moveTo(880, 402);
+  ctx.lineTo(990, 236);
+  ctx.lineTo(1040, 268);
+  ctx.lineTo(1090, 178);
+  ctx.lineTo(1150, 262);
+  ctx.lineTo(1200, 240);
+  ctx.lineTo(1240, 402);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "rgba(255,252,255,.9)";
+  ctx.beginPath();
+  ctx.moveTo(1062, 226);
+  ctx.lineTo(1090, 178);
+  ctx.lineTo(1118, 220);
+  ctx.lineTo(1104, 226);
+  ctx.lineTo(1092, 214);
+  ctx.lineTo(1078, 232);
+  ctx.closePath();
+  ctx.fill();
   drawHills(420, "#a48e6c", 300, 60);
   // Silhouette acacias on the far plain
   for (let far = 0; far < 9; far += 1) {
@@ -5892,30 +6417,54 @@ function drawLionWorld(
   ctx.fillStyle = "rgba(60,45,30,.35)";
   ctx.fillRect(0, LION_GROUND_Y + 4, LION_SAFE_LEFT + 10, 6);
 
-  // The pumpkin shrine on the right: stone steps and the prize
-  const shrineX = 1132;
+  // The trail gate on the right: two stone posts and the path up the mountain
+  const gateX = 1132;
   ctx.fillStyle = "#8a7660";
   roundedRect(ctx, LION_SAFE_RIGHT + 10, LION_GROUND_Y - 14, 130, 30, 6);
   ctx.fill();
-  ctx.fillStyle = "#a08b70";
-  roundedRect(ctx, LION_SAFE_RIGHT + 30, LION_GROUND_Y - 30, 100, 24, 6);
-  ctx.fill();
-  ctx.fillStyle = "#b39d80";
-  roundedRect(ctx, shrineX - 30, LION_GROUND_Y - 44, 60, 22, 5);
-  ctx.fill();
   ctx.fillStyle = "rgba(255,235,190,.25)";
-  ctx.fillRect(LION_SAFE_RIGHT + 30, LION_GROUND_Y - 30, 100, 3);
-  ctx.fillRect(shrineX - 30, LION_GROUND_Y - 44, 60, 3);
+  ctx.fillRect(LION_SAFE_RIGHT + 10, LION_GROUND_Y - 14, 130, 3);
+  const trail = ctx.createLinearGradient(gateX - 40, LION_GROUND_Y - 14, gateX + 80, LION_GROUND_Y - 120);
+  trail.addColorStop(0, "#c9ad78");
+  trail.addColorStop(1, "rgba(201,173,120,0)");
+  ctx.fillStyle = trail;
+  ctx.beginPath();
+  ctx.moveTo(gateX - 34, LION_GROUND_Y - 14);
+  ctx.quadraticCurveTo(gateX + 30, LION_GROUND_Y - 50, gateX + 90, LION_GROUND_Y - 130);
+  ctx.lineTo(gateX + 120, LION_GROUND_Y - 118);
+  ctx.quadraticCurveTo(gateX + 60, LION_GROUND_Y - 40, gateX + 30, LION_GROUND_Y - 14);
+  ctx.closePath();
+  ctx.fill();
+  for (const post of [gateX - 46, gateX + 14]) {
+    ctx.fillStyle = "#6f6152";
+    roundedRect(ctx, post, LION_GROUND_Y - 92, 20, 80, 5);
+    ctx.fill();
+    ctx.fillStyle = "#9c8b76";
+    roundedRect(ctx, post + 3, LION_GROUND_Y - 89, 8, 74, 3);
+    ctx.fill();
+    ctx.fillStyle = "#5b4e42";
+    roundedRect(ctx, post - 4, LION_GROUND_Y - 98, 28, 10, 3);
+    ctx.fill();
+  }
+  ctx.fillStyle = "#e1a644";
+  roundedRect(ctx, gateX - 62, LION_GROUND_Y - 128, 112, 30, 6);
+  ctx.fill();
+  ctx.strokeStyle = "#8d5529";
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.fillStyle = "#3a281c";
+  ctx.font = "800 13px Arial";
+  ctx.textAlign = "center";
+  ctx.fillText("SUMMIT ↗", gateX - 6, LION_GROUND_Y - 108);
   for (let v = 0; v < 5; v += 1) {
     drawLeaf(ctx, LION_SAFE_RIGHT + 16 + v * 26, LION_GROUND_Y - 12, 12, -0.9 + (v % 2) * 0.5, v % 2 ? "#6f9a44" : "#8fae4c");
   }
-  drawGoldenPumpkin(ctx, shrineX, LION_GROUND_Y - 44, elapsed, field.celebrate);
 
   // Companion cheering from the rocks
   const companion: Character = activeCharacter === "guto" ? "nanda" : "guto";
   const inTheOpen = !inSafeZone(player.x) && !field.won;
-  if (!field.won) {
-    drawCharacter(ctx, 46, LION_GROUND_Y - 40, companion, 1, elapsed, inTheOpen ? "wave" : "idle", 0, 0.88);
+  {
+    drawCharacter(ctx, 46, LION_GROUND_Y - 40, companion, 1, elapsed, inTheOpen || field.won ? "wave" : "idle", 0, 0.88);
     if (inTheOpen && !field.lost) {
       const bubbleY = LION_GROUND_Y - 190 + Math.sin(elapsed * 2.8) * 2;
       const line = sees || lion.mood === "chase" ? "RUN!" : lion.mood === "wait" ? "HOLD ON!" : isSheltered(field) ? "WAIT…" : "CLIMB!";
@@ -5958,31 +6507,15 @@ function drawLionWorld(
     ctx.textAlign = "center";
     ctx.fillText("CAUGHT!", Math.max(90, Math.min(player.x, WORLD_WIDTH - 90)), LION_GROUND_Y - 140);
   } else if (field.won) {
-    // Both explorers at the shrine, and the pumpkin lifting into the light
-    const c = field.celebrate;
-    const hop = Math.abs(Math.sin(elapsed * 6)) * 10 * c;
-    drawCharacter(ctx, shrineX - 56, LION_GROUND_Y - 14 - hop, activeCharacter, 1, elapsed, "wave", 0, 1);
-    const arrived = c > 0.7;
-    const runIn = Math.min(1, c / 0.7);
-    const companionX = 720 + (shrineX - 104 - 720) * runIn;
-    drawCharacter(ctx, companionX, LION_GROUND_Y - hop * 0.8, companion, 1, elapsed, arrived ? "wave" : "run", 220, 1);
-    // Confetti
-    for (let bit = 0; bit < 60; bit += 1) {
-      const life = (elapsed * 0.35 + bit * 0.137) % 1;
-      const bx = ((bit * 197) % WORLD_WIDTH) + Math.sin(elapsed * 2 + bit) * 18;
-      const by = life * WORLD_HEIGHT;
-      ctx.fillStyle = ["#ffd34d", "#ff7a59", "#7ad0ff", "#b4ec6d", "#ffffff"][bit % 5];
-      ctx.globalAlpha = c * (1 - life * 0.5);
-      ctx.fillRect(bx, by, 6, 10);
-    }
-    ctx.globalAlpha = 1;
+    // Through the gate; the last climb begins in a moment
+    drawCharacter(ctx, gateX - 16, LION_GROUND_Y - 14, activeCharacter, 1, elapsed, "wave", 0, 1);
     ctx.fillStyle = "rgba(255,244,200,.95)";
-    ctx.font = "900 30px Arial";
+    ctx.font = "900 26px Arial";
     ctx.textAlign = "center";
-    ctx.fillText("THE GOLDEN PUMPKIN!", 600, 200 - c * 10);
+    ctx.fillText("THE SAVANNA IS CROSSED!", 600, 200);
     ctx.font = "900 13px Arial";
     ctx.fillStyle = "rgba(255,244,200,.8)";
-    ctx.fillText("EIGHT GUARDIANS PASSED · THE EXPEDITION IS COMPLETE", 600, 226 - c * 10);
+    ctx.fillText("NOW FOR THE MOUNTAIN", 600, 226);
   } else {
     let motion: CharacterMotion = "idle";
     let drawY = player.y;
@@ -6220,7 +6753,42 @@ export default function Home() {
         player.grabCooldown = Math.max(0, player.grabCooldown - dt);
         player.pushRecovery = Math.max(0, player.pushRecovery - dt);
 
-        if (game.course === 1) {
+        if (game.finaleTime !== null) {
+          game.finaleTime += dt;
+          const cues = [FINALE_CLIMB_START, FINALE_CLIMB_END + 0.7, FINALE_LIFT_END, FINALE_RISE_START, FINALE_RISE_END];
+          while (game.finaleCue < cues.length && game.finaleTime >= cues[game.finaleCue]) {
+            const cue = game.finaleCue;
+            game.finaleCue += 1;
+            if (cue === 0) {
+              setCourseStatus("The last climb — up the mountain path to the top");
+              playTone(392, 0.12, "triangle");
+              window.setTimeout(() => playTone(523, 0.14, "triangle"), 140);
+            } else if (cue === 1) {
+              setCourseStatus("At the summit — they lift the Golden Pumpkin together!");
+              playTone(523, 0.14, "triangle");
+              window.setTimeout(() => playTone(659, 0.14, "triangle"), 130);
+              window.setTimeout(() => playTone(784, 0.2, "triangle"), 260);
+              window.setTimeout(() => playTone(1046, 0.4, "triangle"), 420);
+            } else if (cue === 2) {
+              setCourseStatus("Fireworks, confetti, balloons — the expedition is complete!");
+            } else if (cue === 3) {
+              setCourseStatus("The Golden Pumpkin shines over the whole jungle");
+              playTone(1046, 0.5, "sine");
+            } else {
+              setCourseStatus("THE END — thanks for playing!");
+            }
+          }
+          if (game.finaleTime >= FINALE_LIFT_END && game.finaleTime < FINALE_RISE_START) {
+            const pops = Math.floor((game.finaleTime - FINALE_LIFT_END) / 0.62);
+            const previous = Math.floor((game.finaleTime - dt - FINALE_LIFT_END) / 0.62);
+            if (pops > previous) playTone(180 + (pops % 4) * 60, 0.09, "square");
+          }
+          if (game.finaleTime >= FINALE_END && !game.finaleDone) {
+            game.finaleDone = true;
+            game.running = false;
+            setOverlay("won");
+          }
+        } else if (game.course === 1) {
         if (player.attachedVine !== null) {
           const attachedVine = vines[player.attachedVine];
           const point = gripPoint(attachedVine, game.elapsed, player.vineRatio);
@@ -7150,18 +7718,16 @@ export default function Home() {
               case "escape":
                 break;
               case "won":
-                // Let the celebration play on the canvas before the card appears
+                // A beat at the gate, then the ending plays on the canvas
                 game.won = true;
-                setCourseStatus("THE GOLDEN PUMPKIN IS YOURS!");
+                setCourseStatus("The savanna is crossed — the mountain trail is ahead!");
                 playTone(659, 0.16, "triangle");
                 window.setTimeout(() => playTone(784, 0.16, "triangle"), 140);
                 window.setTimeout(() => playTone(1046, 0.3, "triangle"), 280);
-                window.setTimeout(() => playTone(1318, 0.5, "triangle"), 460);
                 window.setTimeout(() => {
                   if (gameRef.current !== game) return;
-                  game.running = false;
-                  setOverlay("won");
-                }, 3600);
+                  game.finaleTime = 0;
+                }, 1600);
                 break;
               case "lost":
                 game.lost = true;
@@ -7205,7 +7771,7 @@ export default function Home() {
                     : sees
                       ? "IT SEES YOU — get under a branch, SPACE, then ↑!"
                       : player.x > LION_SAFE_RIGHT
-                        ? "The shrine! Walk up to the Golden Pumpkin"
+                        ? "The trail gate! Walk on through"
                         : "In the open — keep running, SPACE under a branch and ↑ to climb",
             );
           }
@@ -7214,7 +7780,8 @@ export default function Home() {
         game.elapsed += dt * 0.35;
       }
 
-      if (game.course === 1) drawWorld(context, game, activeCharacter);
+      if (game.finaleTime !== null) drawFinale(context, game, activeCharacter);
+      else if (game.course === 1) drawWorld(context, game, activeCharacter);
       else if (game.course === 2) drawMonkeyWorld(context, game, activeCharacter);
       else if (game.course === 3) drawEagleWorld(context, game, activeCharacter);
       else if (game.course === 4) drawHippoWorld(context, game, activeCharacter);
@@ -7268,7 +7835,11 @@ export default function Home() {
         } else if (game.course === 7) {
           game.river.jumpPresses += 1;
         } else if (game.course === 8) {
-          game.lion.jumpPresses += 1;
+          if (game.finaleTime !== null) {
+            if (game.finaleTime > 2 && game.finaleTime < FINALE_END - 0.2) game.finaleTime = FINALE_END - 0.2;
+          } else {
+            game.lion.jumpPresses += 1;
+          }
         } else if (game.course === 2 && player.onGround) {
           player.vy = -515;
           player.onGround = false;
@@ -7348,7 +7919,11 @@ export default function Home() {
     } else if (game.course === 7) {
       game.river.jumpPresses += 1;
     } else if (game.course === 8) {
-      game.lion.jumpPresses += 1;
+      if (game.finaleTime !== null) {
+        if (game.finaleTime > 2 && game.finaleTime < FINALE_END - 0.2) game.finaleTime = FINALE_END - 0.2;
+      } else {
+        game.lion.jumpPresses += 1;
+      }
     } else if (game.course === 2 && player.onGround) {
       player.vy = -515;
       player.onGround = false;
@@ -7541,7 +8116,7 @@ export default function Home() {
             "Seen from above, the forest floor is a tangle of roots and sleeping vipers that look exactly alike. Hop one row at a time, wake them on purpose, and remember what you saw.",
             "The trail ends at a cliff. Down in the valley, wild pigs root among the boulders. Strap on the pea-leg stilts — taller than the valley wall, for now — and cross before the boars chew them too short to climb out.",
             "The trail is cut by a wide river sliding toward a waterfall. Logs float down it — hop aboard, spin them the right way to steer across, and don't fall in with the piranhas.",
-            "The last stretch is open savanna, and a lion guards the Golden Pumpkin at the far end. Three acacia trees are the only cover: jump for a branch and climb it before the lion gets there, and only move when it isn't watching.",
+            "The last stretch is open savanna, and a lion guards the only trail up the mountain. Three acacia trees are the only cover: jump for a branch and climb it before the lion gets there, and only move when it isn't watching.",
           )}
         </p>
       </section>
@@ -7591,7 +8166,7 @@ export default function Home() {
               "A top-down maze course. Hop across twenty rows of roots and sleeping snakes that look identical, waking snakes briefly to memorize a safe path.",
               "A side-scrolling valley course. Drop from the high ground and cross the valley floor on wooden stilts, vaulting boulders with Z and Space while wild pigs bite the stilts shorter; climb out only while the stilts are still taller than the valley wall.",
               "A top-down river course. Hop onto floating logs and spin them with the arrow keys to steer left-to-right across a current flowing toward a waterfall, while piranhas wait below; reach the far bank without falling in or going over the falls.",
-              "A side-scrolling savanna course. Cross open ground guarded by a lion that charges anything it sees on the ground or hanging from a branch. Jump under an acacia branch to catch it and press up to climb to safety; press down and then jump to get back down, and move only while the lion is looking away. Reach the shrine to claim the Golden Pumpkin.",
+              "A side-scrolling savanna course. Cross open ground guarded by a lion that charges anything it sees on the ground or hanging from a branch. Jump under an acacia branch to catch it and press up to climb to safety; press down and then jump to get back down, and move only while the lion is looking away. Reach the trail gate to begin the final climb to the Golden Pumpkin.",
             )}
           />
 
@@ -7633,7 +8208,7 @@ export default function Home() {
                       ) : activeCourse === 7 ? (
                         <>Spin the logs across.<br />Stay out of the piranhas.</>
                       ) : (
-                        <>Cross the savanna.<br />Claim the Golden Pumpkin.</>
+                        <>Cross the savanna.<br />Reach the mountain trail.</>
                       )}
                     </h2>
                     <p>
@@ -7891,7 +8466,7 @@ export default function Home() {
                     "Twenty rows of vipers and not one bite. Beyond the trees the ground drops into a valley where wild pigs root and squeal.",
                     "Up and over the far wall with wood to spare, and not a single boar caught you. Ahead, the trail is cut by a wide river racing toward a waterfall.",
                     "Across the river without a splash — the piranhas go hungry and the waterfall roars behind you. One last guardian stands between you and the Golden Pumpkin.",
-                    "The lion never laid a paw on you. Guto and Nanda lift the Golden Pumpkin from its shrine, and its light spills back across the savanna, the river, the valley, and every tree of the jungle. Eight guardians, one golden prize — the expedition is complete.",
+                    "The lion never laid a paw on you. Up the winding mountain path, at the very top, the Golden Pumpkin was waiting — and Guto and Nanda lifted it together. Its light spills back across the savanna, the river, the valley, and every tree of the jungle. Eight guardians, one golden prize — the expedition is complete.",
                   )}
                 </p>
                 <div className="result-actions">
