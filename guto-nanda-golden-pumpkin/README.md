@@ -6,9 +6,10 @@ Golden Pumpkin.
 
 ## Current build
 
-- Courses 1 through 7 are playable end to end: **The Crocodile Canal**,
+- All eight courses are playable end to end: **The Crocodile Canal**,
   **The Pushing Monkeys**, **The Diving Eagles**, **The Hippo Crossing**,
-  **The Sleeping Snakes**, **The Wild Pig Valley**, and **The Piranha River**.
+  **The Sleeping Snakes**, **The Wild Pig Valley**, **The Piranha River**, and
+  the finale, **The Lion's Watch**, which ends with the Golden Pumpkin.
 - Choose Guto or Nanda as the active explorer; their partner cheers from shore.
 - Run, jump, catch any part of a swinging vine, climb it, and reach the far bank.
 - Animated crocodiles, water, procedural jungle scenery, sound cues, game-over,
@@ -51,6 +52,20 @@ Golden Pumpkin.
   climbs, spin only slows the fall. So no single log carries you across; before
   yours sinks too low you must hop UP to a fresher, higher one. A DISTANCE TO
   FALLS meter, a LOG SPIN gauge, and a crossing bar keep the state readable.
+- Course 8 is the finale: an open savanna between the trail-head rocks and the
+  shrine where the Golden Pumpkin sits, guarded by one lion. The lion prowls a
+  patrol between spots on its ground, stops to look around, and only ever turns
+  after stopping; it charges anything it *sees* — an explorer on the ground or
+  hanging from a branch, within its line of sight and in front of its nose —
+  and it runs faster than you. Three acacia trees each carry one low branch:
+  `Space` under it catches the branch (you hang, still catchable), `↑` climbs
+  onto it (safe). A lion whose prey went up a tree runs to the trunk, paces and
+  roars beneath it, and after a few seconds loses interest and wanders off.
+  Getting down is the same two moves in reverse: `↓` to hang, `Space` to drop.
+  A gaze cone on the ground, a THE LION panel with a losing-interest timer, and
+  a progress bar to the pumpkin keep the decision readable. Winning plays a
+  celebration on the canvas — both explorers at the shrine, the pumpkin rising
+  in light — before the EXPEDITION COMPLETE card.
 
 ## Controls
 
@@ -138,6 +153,22 @@ FALLS meter: no single log crosses the river, so before yours sinks too low,
 aim a jump at a higher log and hop UP to it. Fall in the water and the piranhas
 end the attempt; drift over the waterfall lip and you go over. Reach the far
 bank to finish.
+
+In Course 8, the rocks at the start and the shrine at the end are safe; the
+open grass between them is not. Watch the lion: the cone on the ground shows
+where it is looking, and the THE LION panel says whether it is looking away,
+facing your way, stopped to look around, charging, or pacing under your tree.
+A lion that is walking never turns mid-stride — it turns only after it stops —
+so a lion walking away from you is your window. Run with `←` / `→` (hold `X`
+to run; a charging lion is still faster), and under a tree press `Space` to
+jump for the branch and `↑` to climb onto it. Hanging is **not** safe: the lion
+leaps and pulls you off. Standing on the branch is safe; `←` / `→` walks along
+it. A lion that chased you up a tree paces below and loses interest after about
+three and a half seconds, then wanders off. Press `↓` to hang from the branch
+and `Space` to drop back to the grass. The rule that wins: go when the lion is
+looking away **and** is not between you and the next tree — a lion walking to
+the same tree you are running to will turn round right when you get there.
+Reach the shrine to lift the Golden Pumpkin and complete the expedition.
 
 ## Run locally
 
