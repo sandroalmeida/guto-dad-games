@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#10191b" />
+  <meta name="description" content="Motorcycle Mania — jump tracks, dodge danger, and keep the tank topped up. A game for Guto and Dad." />
+  <title>Motorcycle Mania</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2310191b'/%3E%3Cpath d='M9 47L23 17h10l-2 18 14-18h10L41 47H31l2-17-14 17Z' fill='%23ff7846'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="app">
+    <header class="masthead">
+      <a class="brand" href="./" aria-label="Motorcycle Mania home"><span class="brand-icon">M<span>M</span></span><span>MOTORCYCLE<br><b>MANIA</b></span></a>
+      <div class="edition"><span class="live-dot"></span> GUTO & DAD GAME CLUB <span class="edition-line">//</span> VOL. 04</div>
+      <div class="header-actions"><button id="sound" aria-label="Turn sound off" title="Sound (M)">♫ <span>SOUND ON</span></button><button id="pause" aria-label="Pause game" title="Pause (P)">Ⅱ <span>PAUSE</span></button></div>
+    </header>
+
+    <section class="game-shell" aria-label="Motorcycle Mania game">
+      <div class="hud">
+        <div id="fuel-card" class="fuel-card"><div class="hud-label"><span>▰ &nbsp; FUEL TANK</span><b id="fuel-number">100%</b></div><div id="fuel-meter" class="fuel-meter" role="progressbar" aria-label="Fuel remaining" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"><div id="fuel-fill"></div></div><small id="fuel-note">GRAB THE TEAL FUEL BOTTLES</small></div>
+        <div class="lives-card"><div class="hud-label">KEEP THE RIDE ALIVE</div><div id="hearts" class="hearts" aria-label="3 lives remaining"><span>♥</span><span>♥</span><span>♥</span></div></div>
+        <div class="speed-card"><div class="hud-label">SPEED <span id="throttle">CRUISING</span></div><div class="speed-value"><b id="speed-number">112</b><span>KM/H</span><div id="speed-bars" class="speed-bars" aria-hidden="true"></div></div></div>
+      </div>
+      <div class="ride-setup" aria-label="Ride difficulty">
+        <span class="setup-label">CHOOSE YOUR PACE</span>
+        <div class="mode-buttons" role="group" aria-label="Difficulty options">
+          <button data-difficulty="cruise" aria-pressed="false">CRUISE</button>
+          <button data-difficulty="arcade" aria-pressed="true">ARCADE</button>
+          <button data-difficulty="mania" aria-pressed="false">MANIA</button>
+        </div>
+        <p id="mode-description">112 km/h. More traffic, slippery tracks, bigger thrills.</p>
+      </div>
+      <div class="viewport">
+        <canvas id="game" width="1280" height="650" aria-label="A side-view motorcycle course. Use up and down to jump tracks, right to accelerate, and left to brake."></canvas>
+        <div id="notice" class="notice" aria-live="polite"></div>
+        <div id="grip-status" class="grip-status hidden"><span id="grip-label" role="status"></span><b id="grip-time" aria-hidden="true"></b><div aria-hidden="true"><i id="grip-fill"></i></div></div>
+        <div id="screen" class="screen">
+          <div class="intro" id="intro">
+            <p class="eyebrow"><span></span> THE NEVER-ENDING NIGHT RIDE</p>
+            <h1>MOTORCYCLE<br><em>MANIA.</em></h1>
+            <p class="intro-copy">Up to ten tracks. Three lives. Full throttle.<br>Dodge the spills. Watch for exploding barrels.</p>
+            <button id="start" class="primary">LET’S RIDE <span>↗</span></button>
+            <p class="enter-hint">or press <kbd>Enter</kbd> to hit the road</p>
+            <div class="intro-chips"><span>↑ ↓ &nbsp; JUMP TRACKS</span><span>← → &nbsp; CONTROL SPEED</span></div>
+          </div>
+          <div id="pause-panel" class="center-panel hidden"><p class="eyebrow">PIT STOP</p><h2>TAKE A<br><em>BREATHER.</em></h2><p>Your ride will be right here.</p><button id="resume" class="primary">KEEP RIDING <span>↗</span></button></div>
+          <div id="over-panel" class="center-panel hidden">
+            <p id="over-reason" class="eyebrow">THAT WAS A WILD RIDE</p>
+            <h2>ONE MORE <em>ROUND?</em></h2>
+            <div class="results"><div><small>DISTANCE</small><b id="final-distance">0 m</b></div><div><small>FUEL COLLECTED</small><b id="final-fuel">0</b></div><div><small>OBSTACLES PASSED</small><b id="final-dodged">0</b></div><div><small>TOP SPEED</small><b id="final-speed">0 km/h</b></div></div>
+            <p id="record-note"></p>
+            <div class="result-actions"><button id="again" class="primary">NEW RIDE <span>↗</span></button><button id="retry" class="secondary">RETRY COURSE ↻</button></div>
+            <p id="course-code" class="course-code"></p>
+            <p class="enter-hint">Press <kbd>Enter</kbd> for a new ride</p>
+          </div>
+        </div>
+        <div class="canvas-vignette" aria-hidden="true"></div>
+      </div>
+      <div class="race-strip"><div><span class="live-dot"></span><b id="sector">01 / THE UNDERPASS</b><span id="track-count" class="track-pill">4 TRACKS</span></div><div class="distance"><span>DISTANCE</span><b id="distance">0000</b><small>m</small></div><div class="best"><span>PERSONAL BEST</span><b id="best">0 m</b><span class="record-icon">⚑</span></div></div>
+    </section>
+
+    <section class="controls" aria-label="How to play">
+      <div class="controls-title"><span class="eyebrow">FIND YOUR FLOW</span><b>YOU’RE IN CONTROL.</b><small>Keyboard or the buttons →</small></div>
+      <div class="control-pair"><button class="key jump-key" data-control="up" aria-label="Jump up a track">↑</button><button class="key jump-key" data-control="down" aria-label="Jump down a track">↓</button><div><b>JUMP TRACKS</b><small>Tap to hop. Hold to keep hopping.</small></div></div>
+      <div class="control-pair"><button class="key" data-control="left" aria-label="Hold to brake">←</button><button class="key accelerate-key" data-control="right" aria-label="Hold to accelerate">→</button><div><b>BRAKE / ACCELERATE</b><small>Pick your pace. The road keeps moving.</small></div></div>
+    </section>
+    <div class="hazard-guide" aria-label="New road hazards"><span><b class="water-label">≈ WATER</b> Slower jumps & throttle</span><span><b class="oil-label">◒ OIL</b> Jumps locked for 0.9s</span><span><b class="blast-label">↑ HOT BARREL</b> Explodes upward</span></div>
+    <footer><span>MADE FOR A LITTLE FRIENDLY COMPETITION.</span><span><kbd>P</kbd> PAUSE &nbsp; <kbd>M</kbd> SOUND &nbsp; <span class="footer-mark">GO FAR. HAVE FUN.</span></span></footer>
+  </main>
+  <script type="module" src="game.js"></script>
+</body>
+</html>
