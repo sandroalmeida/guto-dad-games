@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f6eedc">
+  <meta name="description" content="A little house. A very big invasion. An endless browser defense game by Guto & Dad.">
+  <title>Alien Invasion — Guto & Dad</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%23c5b5d5'/%3E%3Cellipse cx='32' cy='32' rx='24' ry='12' fill='%238ca873' stroke='%2345364f' stroke-width='3'/%3E%3Cellipse cx='32' cy='24' rx='12' ry='14' fill='%23d4e5ad' stroke='%2345364f' stroke-width='3'/%3E%3Cellipse cx='28' cy='24' rx='2' ry='4' fill='%2345364f'/%3E%3Cellipse cx='36' cy='24' rx='2' ry='4' fill='%2345364f'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="app">
+    <header class="masthead">
+      <a class="brand" href="./" aria-label="Alien Invasion home"><span class="brand-mark" aria-hidden="true"><i></i></span><span><small>GUTO & DAD · GAME CLUB</small><strong>Alien Invasion<span>.</span></strong></span></a>
+      <div class="header-actions"><button id="help" class="icon-button" aria-label="How to play" title="How to play">?<span>Field guide</span></button><button id="sound" class="icon-button" aria-label="Mute sound"><span class="sound-icon" aria-hidden="true">♫</span><span id="sound-label">Sound on</span></button><button id="pause" class="icon-button" aria-label="Pause game" disabled>Ⅱ<span>Pause</span></button></div>
+    </header>
+
+    <div class="game-layout">
+      <section class="board-column" aria-label="Invasion battlefield">
+        <div class="status-bar"><div class="status-time"><span class="status-dot"></span><small>HOME HELD FOR</small><strong id="time">00:00</strong></div><div class="status-threat"><small>THREAT</small><strong id="threat">01</strong><span id="threat-meter" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span></div></div>
+        <div class="battlefield" id="battlefield">
+          <canvas id="game" aria-label="Alien ships enter tunnels at the top and approach the house at the bottom. Select a weapon and activate an empty defense pad."></canvas>
+          <div id="pad-controls" class="pad-controls" aria-label="Defense pads"></div>
+          <div id="notice" class="notice" role="status" aria-live="polite"></div>
+          <div id="countdown" class="countdown" hidden><span>PLACE YOUR FIRST DEFENSES</span><strong id="countdown-number">5</strong><small>Ships arrive soon</small></div>
+
+          <section class="screen menu-screen" id="menu-screen" aria-label="Start Alien Invasion">
+            <div class="intro-card"><span class="stamp">A LITTLE HOUSE. A VERY BIG INVASION.</span><h1>Not our<br><em>home.</em></h1><p>Place your defenses.<br>Keep replacing them.<br>Keep the aliens out.</p><button class="primary" id="start">Protect our home <span aria-hidden="true">↗</span></button><small class="key-hint"><kbd>Enter</kbd> to start · Mouse or touch to place</small></div>
+          </section>
+
+          <section class="screen paused-screen" id="paused-screen" hidden aria-label="Game paused"><div class="modal"><span class="stamp">EVERYONE HOLD THAT THOUGHT</span><h2>Tea break.</h2><p>Your house is safe while we wait.</p><button class="primary" id="resume">Back to the invasion <span>→</span></button><button class="text-button" id="restart-pause">Start a new invasion</button></div></section>
+
+          <section class="screen over-screen" id="over-screen" hidden aria-label="Invasion results"><div class="modal"><span class="stamp">ONE SLIPPED THROUGH</span><h2>They found<br>the front door.</h2><p id="over-reason">The house has been invaded.</p><div class="results"><div><small>HOME HELD</small><strong id="final-time">00:00</strong></div><div><small>SHIPS STOPPED</small><strong id="final-kills">0</strong></div><div><small>THREAT</small><strong id="final-threat">1</strong></div></div><p class="record" id="record"></p><button class="primary" id="again">One more invasion <span>↗</span></button><button class="text-button" id="retry">Retry the same invasion</button><small class="course-code" id="course-code"></small></div></section>
+
+          <section class="screen guide-screen" id="guide-screen" hidden aria-label="How to play"><div class="modal guide"><span class="stamp">THE HOME DEFENDER’S FIELD GUIDE</span><h2>Make yourself<br>uninvadable.</h2><ol><li><strong>Pick a weapon.</strong><span>Tap a toolbox card or press 1–4.</span></li><li><strong>Claim a pad.</strong><span>Tap a + in a tunnel. Weapons aim and fire themselves. Walls block direct shots.</span></li><li><strong>Keep replacing.</strong><span>Ammo rings drain as weapons fire. Empty defenses disappear. More tools arrive every 10 seconds.</span></li><li><strong>Watch every passage.</strong><span>New tunnels are announced. New entrances bring extra weapons. One ship at the house ends your run.</span></li></ol><p class="guide-extra">Sniper: precision · Blaster: laser bazooka<br>Light cannon: rapid lasers · Bomb: proximity blast</p><button class="primary" id="close-guide">Got it. Guard the house. <span>→</span></button><small class="key-hint"><kbd>P</kbd> pause · <kbd>M</kbd> sound · Arrow keys move between pads</small></div></section>
+        </div>
+        <div class="board-footer"><span><i aria-hidden="true"></i><strong id="home-status">HOME SWEET HOME</strong></span><span id="board-hint">One ship gets through. Game over.</span></div>
+      </section>
+
+      <aside class="toolbox" aria-label="Weapons and supplies">
+        <div class="toolbox-heading"><span class="eyebrow">DEFENSE DEPARTMENT</span><h2>Your toolbox<span>↙</span></h2><p id="toolbox-instruction">Select a weapon. Find it a good spot.</p></div>
+        <div class="weapons" aria-label="Select a weapon">
+          <button class="weapon-card selected" data-weapon="sniper" aria-pressed="true"><span class="weapon-shortcut">1</span><canvas data-art="sniper" width="180" height="140" aria-hidden="true"></canvas><span class="weapon-count" data-count="sniper">2</span><strong>Sniper</strong><small>Precision railgun</small><span class="weapon-ammo">5 heavy shots</span></button>
+          <button class="weapon-card" data-weapon="blaster" aria-pressed="false"><span class="weapon-shortcut">2</span><canvas data-art="blaster" width="180" height="140" aria-hidden="true"></canvas><span class="weapon-count" data-count="blaster">4</span><strong>Blaster</strong><small>Laser bazooka</small><span class="weapon-ammo">3 explosive rockets</span></button>
+          <button class="weapon-card" data-weapon="cannon" aria-pressed="false"><span class="weapon-shortcut">3</span><canvas data-art="cannon" width="180" height="140" aria-hidden="true"></canvas><span class="weapon-count" data-count="cannon">2</span><strong>Light cannon</strong><small>Rapid laser gun</small><span class="weapon-ammo">32 quick shots</span></button>
+          <button class="weapon-card" data-weapon="bomb" aria-pressed="false"><span class="weapon-shortcut">4</span><canvas data-art="bomb" width="180" height="140" aria-hidden="true"></canvas><span class="weapon-count" data-count="bomb">2</span><strong>Bomb</strong><small>Proximity blast</small><span class="weapon-ammo">One big boom</span></button>
+        </div>
+        <div class="weapon-detail"><span class="detail-dot" id="detail-dot"></span><p id="weapon-detail">Long reach. Five heavy shots. Picks out the toughest ship in sight.</p></div>
+        <section class="supply-box" aria-label="Next supply delivery"><div class="supply-heading"><span class="parcel" aria-hidden="true">▧</span><div><small>SPECIAL DELIVERY</small><strong>Next supplies</strong></div><b id="supply-time">10<span>s</span></b></div><div class="supply-track"><i id="supply-progress"></i></div><div id="supply-next" class="supply-next">Light cannon + Blaster</div></section>
+        <div class="field-note" id="field-note"><span class="note-pin" aria-hidden="true"></span><small>A NOTE FROM HOME</small><p>“We’ve put the kettle on.<br>Please deal with the aliens.”</p><span>— The family</span></div>
+        <div class="run-stats"><div><small>SHIPS STOPPED</small><strong id="kills">0</strong></div><div><small>PERSONAL BEST</small><strong id="best">00:00</strong></div></div>
+      </aside>
+    </div>
+    <footer class="page-footer"><span>Imagined by Guto. Defended by you.</span><span><kbd>1–4</kbd> select <b>·</b> <kbd>Click / tap</kbd> place <b>·</b> <kbd>P</kbd> pause</span></footer>
+    <div class="sr-only" id="announcement" aria-live="polite"></div>
+  </main>
+  <script type="module" src="game.js"></script>
+</body>
+</html>
